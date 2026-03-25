@@ -222,7 +222,7 @@ def call_sender(target: str, msg_type: str, text: str, image_path: str):
             "--text", text or "",
             "--image-path", img,
         ]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=30)
         if r.returncode != 0:
             err = (r.stderr.strip() or r.stdout.strip() or "发送失败")
             print(f"[call_sender] {err}", file=sys.stderr)
