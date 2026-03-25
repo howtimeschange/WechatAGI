@@ -1,0 +1,35 @@
+.titlebar {
+  height: var(--titlebar-height);
+  background: var(--wx-sidebar-bg);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  -webkit-app-region: drag;
+  user-select: none;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.titlebar-mac-space {
+  width: 72px; /* traffic lights space */
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-icon {
+  display: flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.85);
+  letter-spacing: 0.3px;
+}
+
+.titlebar.win {
+  padding-left: 12px;
+}

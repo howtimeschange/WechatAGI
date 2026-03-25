@@ -1,0 +1,54 @@
+.log-drawer {
+  margin: 0 24px 12px;
+  border-radius: var(--wx-radius);
+  overflow: hidden;
+  box-shadow: var(--wx-shadow);
+  flex-shrink: 0;
+  max-height: 220px;
+  display: flex;
+  flex-direction: column;
+}
+
+.log-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: #2D2D2D;
+  flex-shrink: 0;
+}
+
+.log-drawer-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.6);
+}
+
+.live-indicator {
+  color: var(--wx-green);
+  font-size: 12px;
+  animation: blink 1.5s infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.log-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  background: #1E1E1E;
+  padding: 10px 14px;
+  font-family: "SF Mono", "Consolas", "Monaco", monospace;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.log-line { color: #D4D4D4; }
+.log-success { color: #4EC9B0; }
+.log-error { color: #F48771; }
+.log-dim { color: #888; }
+.log-empty { color: #555; text-align: center; padding: 12px; font-family: inherit; font-size: 12px; }

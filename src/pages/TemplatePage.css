@@ -1,0 +1,152 @@
+.tpl-card {
+  padding: 0;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.tpl-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--wx-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid var(--wx-border);
+}
+
+.tpl-note {
+  font-size: 13px;
+  color: var(--wx-text-secondary);
+  padding: 10px 16px;
+  background: var(--wx-green-light);
+  border-bottom: 1px solid var(--wx-border);
+  line-height: 1.5;
+}
+
+.tpl-table-wrap {
+  overflow-x: auto;
+}
+
+.tpl-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tpl-table th {
+  text-align: left;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--wx-text-secondary);
+  font-weight: 500;
+  background: #FAFAFA;
+  border-bottom: 1px solid var(--wx-border);
+}
+
+.tpl-table td {
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--wx-border);
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+.tpl-table tr:last-child td { border-bottom: none; }
+
+.col-name {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.col-name.required { color: var(--wx-text-primary); }
+
+.col-desc {
+  color: var(--wx-text-secondary);
+  font-size: 12px;
+}
+
+.col-example {
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 12px;
+  color: var(--wx-green-dark);
+}
+
+/* 风控 */
+.risk-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+
+.risk-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--wx-border);
+  border-right: 1px solid var(--wx-border);
+}
+
+.risk-item:nth-child(2n) { border-right: none; }
+.risk-item:nth-child(3), .risk-item:nth-child(4) { border-bottom: none; }
+
+.risk-icon { font-size: 20px; flex-shrink: 0; }
+
+.risk-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--wx-text-primary);
+  margin-bottom: 4px;
+}
+
+.risk-desc {
+  font-size: 12px;
+  color: var(--wx-text-secondary);
+  line-height: 1.5;
+}
+
+/* 状态列表 */
+.status-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--wx-border);
+}
+
+.status-row:last-child { border-bottom: none; }
+
+.status-desc {
+  font-size: 13px;
+  color: var(--wx-text-secondary);
+}
+
+/* FAQ */
+.faq-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.faq-item {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--wx-border);
+}
+
+.faq-item:last-child { border-bottom: none; }
+
+.faq-q {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--wx-text-primary);
+  margin-bottom: 6px;
+}
+
+.faq-a {
+  font-size: 13px;
+  color: var(--wx-text-secondary);
+  line-height: 1.6;
+  padding-left: 4px;
+}

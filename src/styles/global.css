@@ -1,0 +1,175 @@
+/* 微信设计规范色彩系统 */
+:root {
+  --wx-green: #07C160;
+  --wx-green-dark: #06AD56;
+  --wx-green-light: #E8F9F0;
+  --wx-bg: #F5F5F5;
+  --wx-bg-card: #FFFFFF;
+  --wx-sidebar-bg: #2C2C2C;
+  --wx-sidebar-active: #3D3D3D;
+  --wx-text-primary: #191919;
+  --wx-text-secondary: #888888;
+  --wx-text-tertiary: #BBBBBB;
+  --wx-border: #E8E8E8;
+  --wx-danger: #FA5151;
+  --wx-warning: #FF9C00;
+  --wx-blue: #10AEFF;
+  --wx-radius: 8px;
+  --wx-radius-sm: 4px;
+  --wx-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  --wx-shadow-md: 0 4px 16px rgba(0,0,0,0.12);
+  --titlebar-height: 38px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  font-size: 14px;
+  color: var(--wx-text-primary);
+  background: var(--wx-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #D9D9D9; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #BBBBBB; }
+
+/* 通用按钮 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--wx-radius-sm);
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: inherit;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.btn:active { transform: scale(0.97); }
+
+.btn-primary {
+  background: var(--wx-green);
+  color: #fff;
+}
+.btn-primary:hover { background: var(--wx-green-dark); }
+.btn-primary:disabled { background: #C8E9D8; cursor: not-allowed; transform: none; }
+
+.btn-secondary {
+  background: #F0F0F0;
+  color: var(--wx-text-primary);
+}
+.btn-secondary:hover { background: #E5E5E5; }
+
+.btn-danger {
+  background: var(--wx-danger);
+  color: #fff;
+}
+.btn-danger:hover { background: #E04545; }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--wx-green);
+  border: 1px solid var(--wx-green);
+}
+.btn-ghost:hover { background: var(--wx-green-light); }
+
+/* 卡片 */
+.card {
+  background: var(--wx-bg-card);
+  border-radius: var(--wx-radius);
+  box-shadow: var(--wx-shadow);
+}
+
+/* 标签 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.badge-success { background: var(--wx-green-light); color: var(--wx-green-dark); }
+.badge-waiting { background: #FFF7E6; color: var(--wx-warning); }
+.badge-failed  { background: #FFF0F0; color: var(--wx-danger); }
+.badge-running { background: #E6F7FF; color: var(--wx-blue); }
+
+/* 输入框 */
+.input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--wx-border);
+  border-radius: var(--wx-radius-sm);
+  font-size: 14px;
+  font-family: inherit;
+  background: #FAFAFA;
+  color: var(--wx-text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.input:focus { border-color: var(--wx-green); background: #fff; }
+
+/* 开关 */
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: #CCC;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  border-radius: 50%;
+  transition: 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.toggle input:checked + .toggle-slider { background: var(--wx-green); }
+.toggle input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+/* 分割线 */
+.divider {
+  height: 1px;
+  background: var(--wx-border);
+  margin: 16px 0;
+}
+
+/* 日志面板 */
+.log-panel {
+  font-family: "SF Mono", "Consolas", "Monaco", monospace;
+  font-size: 12px;
+  background: #1E1E1E;
+  color: #D4D4D4;
+  border-radius: var(--wx-radius-sm);
+  padding: 12px;
+  overflow-y: auto;
+  line-height: 1.6;
+}
+.log-success { color: #4EC9B0; }
+.log-error { color: #F48771; }
+.log-dim { color: #888; }
