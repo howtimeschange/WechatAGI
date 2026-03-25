@@ -18,37 +18,31 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install and bundle Python 3.12 via Homebrew
+      # ── python-build-standalone（temu-assistant 同款方案）──────────────
+      - name: Download and bundle Python 3.12 for macOS
         run: |
-          brew install python@3.12
+          VERSION="20241020"
+          PY_VERSION="3.12.8"
+          BASE="https://github.com/astral-sh/python-build-standalone/releases/download/${VERSION}"
+          PROXY="${GITHUB_PROXY:-}"
 
-          # Homebrew Cellar 路径（无尾部斜杠）
-          PYTHON_CELLAR=$(brew --cellar python@3.12)
-          echo "Cellar: $PYTHON_CELLAR"
-
-          BUNDLE_DIR="python/bundle"
-          mkdir -p "$BUNDLE_DIR"
-          cp -R "$PYTHON_CELLAR" "$BUNDLE_DIR/Cellar_python"
-
-          # 找到版本目录（如 3.12.12_2）
-          PYTHON_VERSION_SUBDIR=$(ls "$BUNDLE_DIR/Cellar_python/" | grep python@3.12 | head -1)
-          echo "Version subdir: $PYTHON_VERSION_SUBDIR"
-          PYTHON_BASE="$BUNDLE_DIR/Cellar_python/$PYTHON_VERSION_SUBDIR"
-
-          # 创建 python3.12 符号链接
-          mkdir -p "$BUNDLE_DIR/bin"
-          ln -sf "$PYTHON_BASE/bin/python3.12" "$BUNDLE_DIR/bin/python3.12"
-          ln -sf "$PYTHON_BASE/bin/pip3" "$BUNDLE_DIR/bin/pip3" 2>/dev/null || true
-
-          echo "Bundle contents:"
-          ls "$BUNDLE_DIR/"
-          echo "Symlink:"
-          ls -la "$BUNDLE_DIR/bin/python3.12"
-
+          # macOS arm64
+          FILE="cpython-${PY_VERSION}+${VERSION}-aarch64-apple-darwin-install_only_stripped.tar.gz"
+          DEST="python/bundle"
+          mkdir -p "$DEST"
+          if [ ! -f "$DEST/bin/python3" ]; then
+            echo "Downloading macOS arm64 Python..."
+            curl -L -o /tmp/$FILE "${PROXY}${BASE}/${FILE}" --progress-bar
+            echo "Extracting..."
+            tar -xzf /tmp/$FILE -C "$DEST" --strip-components=1
+            rm -f /tmp/$FILE
+          fi
+          echo "Python bin:"
+          ls "$DEST/bin/"
           echo "Installing openpyxl..."
-          "$BUNDLE_DIR/bin/python3.12" -m pip install openpyxl --quiet
+          "$DEST/bin/pip3" install openpyxl --quiet
           echo "Done. Python version:"
-          "$BUNDLE_DIR/bin/python3.12" --version
+          "$DEST/bin/python3" --version
 
       - name: Install Node deps
         run: npm ci
@@ -74,25 +68,27 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Download, install Python + openpyxl, bundle into build
+      - name: Download and bundle Python 3.12 for Windows
         run: |
-          $pythonInstaller = "python-3.12.9-amd64.exe"
-          $installDir = "$env:TEMP\python-bundle"
-          $bundleDir = "python\bundle"
-          if (!(Test-Path "$installDir\python.exe")) {
-            Write-Host "Downloading Python full installer..."
-            curl -sL "https://www.python.org/ftp/python/3.12.9/$pythonInstaller" -o $pythonInstaller
-            Write-Host "Installing Python silently to $installDir..."
-            Start-Process -FilePath ".\$pythonInstaller" -ArgumentList "/quiet","InstallAllUsers=0","PrependPath=1","TargetDir=$installDir" -Wait
-            Remove-Item $pythonInstaller
+          $version = "20241020"
+          $pyVersion = "3.12.8"
+          $base = "https://github.com/astral-sh/python-build-standalone/releases/download/$version"
+          $file = "cpython-$pyVersion+$version-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
+          $dest = "python\bundle"
+          if (!(Test-Path "$dest\python.exe")) {
+            Write-Host "Downloading Windows Python..."
+            curl -L -o /tmp/$file "$base/$file" --progress-bar
+            Write-Host "Extracting..."
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            tar -xzf /tmp/$file -C $dest --strip-components=1
+            Remove-Item /tmp/$file
           }
+          Write-Host "Python:"
+          Get-ChildItem "$dest" -Name
           Write-Host "Installing openpyxl..."
-          & "$installDir\python.exe" -m pip install openpyxl
-          Write-Host "Bundling into python/bundle..."
-          mkdir -Force $bundleDir
-          Copy-Item "$installDir\*" "$bundleDir\" -Recurse -Force
-          Write-Host "Done. Bundle:"
-          Get-ChildItem $bundleDir | Select-Object Name
+          & "$dest\python.exe" -m pip install openpyxl --quiet
+          Write-Host "Done. Python version:"
+          & "$dest\python.exe" --version
 
       - name: Install Node deps
         run: npm ci

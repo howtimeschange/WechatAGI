@@ -12,20 +12,12 @@ function getPythonPath() {
   // extraResources: python/ -> Resources/python/
   const base = path.join(process.resourcesPath, 'python')
   if (process.platform === 'win32') {
-    return path.join(base, 'python.exe')
+    const winPython = path.join(base, 'python.exe')
+    return fs.existsSync(winPython) ? winPython : 'python'
   }
-  // macOS: python.org tgz 解压的 Python.framework
-  const frameworkBin = path.join(base, 'Python.framework', 'Versions', '3.12', 'bin', 'python3.12')
-  if (fs.existsSync(frameworkBin)) {
-    return frameworkBin
-  }
-  // 回退：Homebrew Cellar bundle（bin/python3.12）
-  const cellaredBin = path.join(base, 'bin', 'python3.12')
-  if (fs.existsSync(cellaredBin)) {
-    return cellaredBin
-  }
-  // 回退：旧 Framework 路径
-  return path.join(base, 'Python.framework', 'Versions', '3.12', 'bin', 'python3')
+  // macOS: python-build-standalone → python/bundle/bin/python3
+  const macPython = path.join(base, 'bin', 'python3')
+  return fs.existsSync(macPython) ? macPython : 'python3'
 }
 
 function getScriptPath(name) {
