@@ -58,6 +58,32 @@ except ImportError:
         print("[DEBUG] site packages: " + str(site.getsitepackages()), file=sys.stderr)
         sys.exit(1)
 
+
+# ─── 剪贴板工具（win32clipboard 更可靠，替代 pyperclip）──────────
+def _clipboard_clear():
+    """清空剪贴板内容"""
+    try:
+        win32clipboard.OpenClipboard()
+        win32clipboard.EmptyClipboard()
+        win32clipboard.CloseClipboard()
+    except Exception:
+        pass
+
+
+def _clipboard_copy(text: str):
+    """写入文本到剪贴板（win32clipboard 直调，避免 pyperclip 在某些环境失效）"""
+    _clipboard_clear()
+    try:
+        win32clipboard.OpenClipboard()
+        win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
+        win32clipboard.CloseClipboard()
+    except Exception:
+        # fallback: pyperclip
+        try:
+            pyperclip.copy(text)
+        except Exception:
+            pass
+
 # ─── 配置（从外部 config.yaml 读取） ──────────────────────
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -174,45 +200,53 @@ def activate_wechat():
 
 
 def search_contact(name: str):
+    # 确保微信窗口在前台并获取焦点
+    activate_wechat()
+    time.sleep(0.3)
+    # 打开搜索框（Ctrl+F）
     auto.SendKeys("{Ctrl}f")
-    time.sleep(0.25)
-    pyperclip.copy(name)
+    time.sleep(0.35)
+    # 清剪贴板后写入搜索词，避免残留内容混入
+    _clipboard_copy(name)
+    time.sleep(0.1)
     auto.SendKeys("{Ctrl}v")
-    time.sleep(0.2)
+    time.sleep(0.35)
     auto.SendKeys("{Enter}")
-    time.sleep(0.5)
+    time.sleep(0.6)
 
 
 def send_text(text: str):
-    pyperclip.copy(text)
-    auto.SendKeys("{Ctrl}v")
-    time.sleep(0.15)
-    auto.SendKeys("{Enter}")
-
-
-def send_image(image_path: str):
-    img = Image.open(image_path).convert("RGB")
-    win32clipboard.OpenClipboard()
-    try:
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardData(win32con.CF_BITMAP, img)
-    finally:
-        win32clipboard.CloseClipboard()
+    _clipboard_copy(text)
     time.sleep(0.1)
     auto.SendKeys("{Ctrl}v")
     time.sleep(0.2)
     auto.SendKeys("{Enter}")
 
 
-def send_text_with_image(text: str, image_path: str):
-    pyperclip.copy(text)
-    auto.SendKeys("{Ctrl}v")
+def send_image(image_path: str):
+    img = Image.open(image_path).convert("RGB")
+    _clipboard_clear()
+    try:
+        win32clipboard.OpenClipboard()
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardData(win32con.CF_BITMAP, img)
+    finally:
+        win32clipboard.CloseClipboard()
     time.sleep(0.15)
+    auto.SendKeys("{Ctrl}v")
+    time.sleep(0.25)
+    auto.SendKeys("{Enter}")
+
+
+def send_text_with_image(text: str, image_path: str):
+    _clipboard_copy(text)
+    time.sleep(0.1)
+    auto.SendKeys("{Ctrl}v")
+    time.sleep(0.2)
     send_image(image_path)
 
 
 def call_send(target: str, msg_type: str, text: str, image_path: str):
-    activate_wechat()
     search_contact(target)
     if msg_type == "文字":
         send_text(text)
