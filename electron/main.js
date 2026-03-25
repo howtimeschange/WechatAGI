@@ -14,12 +14,17 @@ function getPythonPath() {
   if (process.platform === 'win32') {
     return path.join(base, 'python.exe')
   }
-  // macOS: Homebrew 风格的 Cellar bundle（bin/python3.12）
+  // macOS: python.org tgz 解压的 Python.framework
+  const frameworkBin = path.join(base, 'Python.framework', 'Versions', '3.12', 'bin', 'python3.12')
+  if (fs.existsSync(frameworkBin)) {
+    return frameworkBin
+  }
+  // 回退：Homebrew Cellar bundle（bin/python3.12）
   const cellaredBin = path.join(base, 'bin', 'python3.12')
   if (fs.existsSync(cellaredBin)) {
     return cellaredBin
   }
-  // 回退：Framework 结构（旧版 CI 产物）
+  // 回退：旧 Framework 路径
   return path.join(base, 'Python.framework', 'Versions', '3.12', 'bin', 'python3')
 }
 

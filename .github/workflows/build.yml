@@ -18,49 +18,35 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Bundle Python 3.12 for macOS (Homebrew relocatable copy)
+      - name: Download and bundle Python 3.12 for macOS
         run: |
           BUNDLE_DIR="python/bundle"
-          if [ ! -f "$BUNDLE_DIR/bin/python3.12" ]; then
-            echo "Installing Python 3.12 via Homebrew..."
-            brew install python@3.12
+          # python.org macOS 通用二进制（.tgz，解压即用，无需安装）
+          PYTHON_TGZ="python-3.12.9-macos11.pkg.tar.gz"
+          PYTHON_DIR="Python.framework"
 
-            PYTHON_CELLAR=$(brew --cellar python@3.12)
-            echo "Python Cellar at: $PYTHON_CELLAR"
-            echo "Cellar contents:"
-            ls "$PYTHON_CELLAR/"
-
+          if [ ! -f "$BUNDLE_DIR/$PYTHON_DIR/Versions/3.12/bin/python3.12" ]; then
+            echo "Downloading Python 3.12 macOS binary..."
+            curl -sL "https://www.python.org/ftp/python/3.12.9/$PYTHON_TGZ" -o "/tmp/$PYTHON_TGZ"
+            echo "Extracting to bundle..."
             mkdir -p "$BUNDLE_DIR"
-            echo "Copying Cellar..."
-            cp -R "$PYTHON_CELLAR" "$BUNDLE_DIR/Cellar_python"
-            echo "After copy:"
-            ls "$BUNDLE_DIR/Cellar_python/"
-            ls "$BUNDLE_DIR/Cellar_python/python@3.12/"
-
-            # 找到版本目录（如 3.12.12_2）
-            PYTHON_VERSION_DIR=$(ls "$BUNDLE_DIR/Cellar_python/python@3.12/" | grep -E '^[0-9]' | head -1)
-            echo "Version dir: $PYTHON_VERSION_DIR"
-            PYTHON_INSTALLED="$BUNDLE_DIR/Cellar_python/python@3.12/$PYTHON_VERSION_DIR"
-            echo "Python installed at: $PYTHON_INSTALLED"
-            echo "Bin contents:"
-            ls "$PYTHON_INSTALLED/bin/" | grep python || echo "NO BIN DIRECTORY"
-
-            mkdir -p "$BUNDLE_DIR/bin"
-            ln -sf "$PYTHON_INSTALLED/bin/python3.12" "$BUNDLE_DIR/bin/python3.12"
-            ln -sf "$PYTHON_INSTALLED/bin/pip3" "$BUNDLE_DIR/bin/pip3" 2>/dev/null || true
-
-            echo "Bundle contents:"
-            ls "$BUNDLE_DIR/"
-            echo "Symlink check:"
-            ls -la "$BUNDLE_DIR/bin/"
+            tar -xzf "/tmp/$PYTHON_TGZ" -C "$BUNDLE_DIR"
+            rm -f "/tmp/$PYTHON_TGZ"
+            # 解压后目录名通常是 "Python.framework" 或 "python-3.12.9"
+            EXTRACTED=$(ls "$BUNDLE_DIR/" | grep -i python | head -1)
+            if [ "$EXTRACTED" != "$PYTHON_DIR" ]; then
+              mv "$BUNDLE_DIR/$EXTRACTED" "$BUNDLE_DIR/$PYTHON_DIR"
+            fi
+            echo "Bundle Python:"
+            ls "$BUNDLE_DIR/$PYTHON_DIR/Versions/3.12/bin/" | grep python
           else
             echo "Python already bundled, skipping."
           fi
 
           echo "Installing openpyxl..."
-          "$BUNDLE_DIR/bin/python3.12" -m pip install openpyxl --quiet
+          "$BUNDLE_DIR/$PYTHON_DIR/Versions/3.12/bin/python3.12" -m pip install openpyxl --quiet
           echo "Done. Python version:"
-          "$BUNDLE_DIR/bin/python3.12" --version
+          "$BUNDLE_DIR/$PYTHON_DIR/Versions/3.12/bin/python3.12" --version
 
       - name: Install Node deps
         run: npm ci
