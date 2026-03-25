@@ -9,15 +9,19 @@ function getPythonPath() {
   if (!app.isPackaged) {
     return process.platform === 'win32' ? 'python' : 'python3'
   }
-  // extraResources: python/ -> Resources/python/
+  // extraResources: python/bundle/ -> Resources/python/bundle/
   const base = path.join(process.resourcesPath, 'python')
   if (process.platform === 'win32') {
-    const winPython = path.join(base, 'python.exe')
-    return fs.existsSync(winPython) ? winPython : 'python'
+    // python-build-standalone Windows: python/bundle/python.exe
+    const winPython = path.join(base, 'bundle', 'python.exe')
+    if (fs.existsSync(winPython)) return winPython
+    const fallback = path.join(base, 'python.exe')
+    return fs.existsSync(fallback) ? fallback : 'python'
   }
-  // macOS: python-build-standalone → python/bundle/bin/python3
-  const macPython = path.join(base, 'bin', 'python3')
-  return fs.existsSync(macPython) ? macPython : 'python3'
+  // macOS: python-build-standalone: python/bundle/bin/python3
+  const macPython = path.join(base, 'bundle', 'bin', 'python3')
+  if (fs.existsSync(macPython)) return macPython
+  return 'python3'
 }
 
 function getScriptPath(name) {
