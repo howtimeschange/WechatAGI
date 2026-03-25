@@ -59,29 +59,17 @@ except ImportError:
         sys.exit(1)
 
 
-# ─── 剪贴板工具（win32clipboard 直调，pyperclip 作 fallback）────────
+# ─── 剪贴板工具（pyperclip，win32clipboard 仅用于清空）─────────────
 def _clipboard_clear():
-    """清空剪贴板内容"""
+    """用 pyperclip 写入空字符串清空剪贴板（比 win32clipboard 更稳定）"""
     try:
-        win32clipboard.OpenClipboard()
-        win32clipboard.EmptyClipboard()
-        win32clipboard.CloseClipboard()
+        pyperclip.copy("")
     except Exception:
         pass
 
 
 def _clipboard_copy(text: str):
-    """写入文本到剪贴板（优先 win32clipboard，失败则 fallback 到 pyperclip）"""
-    _clipboard_clear()
-    # 优先用 win32clipboard（Unicode 支持最好）
-    try:
-        win32clipboard.OpenClipboard()
-        win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
-        win32clipboard.CloseClipboard()
-        return
-    except Exception:
-        pass
-    # fallback: pyperclip（跨平台兼容性好）
+    """写入文本到剪贴板（pyperclip，兼容性好不干扰 WeChat）"""
     try:
         pyperclip.copy(text)
     except Exception as e:
@@ -203,39 +191,28 @@ def activate_wechat():
 
 
 def search_contact(name: str, max_retries: int = 2):
-    """搜索联系人（带重试，确保剪贴板不混入残留内容）"""
+    """搜索联系人（带重试，确保剪贴板不混入残留内容）
+
+    流程：激活窗口 → Ctrl+F → 清空剪贴板 → 写搜索词 → Ctrl+V → Enter
+    不使用 ListItemControl 点击验证，避免触发 WeChat 内部 UI 控件导致闪退"""
     for attempt in range(max_retries):
         # 确保主窗口在前台
         activate_wechat()
-        time.sleep(0.4)
+        time.sleep(0.5)
 
-        # 打开搜索框：Ctrl+F 唤起全局搜索
+        # 打开搜索框
         auto.SendKeys("{Ctrl}f")
         time.sleep(0.4)
 
-        # 清剪贴板后再写入本次搜索词
+        # 清空剪贴板后再写本次搜索词（防止残留内容混入）
+        _clipboard_clear()
         _clipboard_copy(name)
-        time.sleep(0.15)
+        time.sleep(0.2)
         auto.SendKeys("{Ctrl}v")
         time.sleep(0.4)
         auto.SendKeys("{Enter}")
         time.sleep(0.8)
-
-        # 验证搜索结果：找同名 ListItem，点击选中
-        try:
-            list_item = auto.ListItemControl(Name=name, searchDepth=6)
-            if list_item.Exists(2):
-                list_item.Click()
-                time.sleep(0.4)
-                return  # 成功
-        except Exception:
-            pass
-
-        # 重试前：按 Escape 关闭搜索框，恢复状态
-        auto.SendKeys("{Esc}")
-        time.sleep(0.3)
-        if attempt < max_retries - 1:
-            time.sleep(0.5)
+        return  # 成功返回
 
     raise RuntimeError(f"未找到联系人 [{name}]，请手动确认微信窗口状态")
 
