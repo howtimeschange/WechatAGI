@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
+import pwd
 import subprocess
 import sys
 import time
@@ -15,6 +17,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+
+def _real_home() -> Path:
+    """返回真实的用户 home 目录，绕过 Python pkg 改写的 $HOME 环境变量。"""
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 try:
     import openpyxl
@@ -36,7 +43,7 @@ IS_WINDOWS = platform.system() == "Windows"
 # 脚本自身所在目录（兼容 dev 和打包后路径）
 _SELF_DIR   = Path(__file__).resolve().parents[0]          # .../python/app/
 _SCRIPTS_DIR = _SELF_DIR.parent / "scripts"                  # .../python/scripts/
-CFG_PATH   = Path.home() / ".wechat-sender" / "config.json"
+CFG_PATH   = _real_home() / ".wechat-sender" / "config.json"
 APPLE_SCRIPT = _SCRIPTS_DIR / "wechat_send_mac.applescript"
 SHEET_TASKS = "发送任务"
 HEADER_ROW = 2

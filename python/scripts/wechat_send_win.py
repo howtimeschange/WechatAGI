@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import json
 import subprocess
 import sys
 import time
@@ -16,6 +15,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+
+def _real_home() -> Path:
+    """返回真实用户 home 目录，绕过 Python pkg 改写的 $HOME（macOS）"""
+    import os
+    if sys.platform == "win32":
+        return Path(os.environ.get("USERPROFILE", os.environ.get("HOMEDRIVE", "C:\\") + "\\Users\\" + os.environ.get("USERNAME", "")))
+    import pwd
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 # 自动安装缺失的 Windows 自动化依赖
 try:
@@ -37,7 +45,7 @@ except ImportError:
 # ─── 配置（从外部 config.yaml 读取） ──────────────────────
 
 ROOT = Path(__file__).resolve().parents[1]
-CFG_PATH = Path.home() / ".wechat-sender" / "config.json"
+CFG_PATH = _real_home() / ".wechat-sender" / "config.json"
 XLSX_PATH = None  # 从 config 读取
 
 SHEET_TASKS = "发送任务"

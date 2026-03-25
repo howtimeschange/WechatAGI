@@ -23,7 +23,7 @@ def generate_template(save_path):
     # Row 1: 合并标题行
     ws.merge_cells('A1:J1')
     c = ws['A1']
-    c.value = '🦐 Weme 批量发送任务表  |  填写说明：带 * 号列为必填；发送时间留空 = 立即发送'
+    c.value = '🦐 微信批量发送任务表  |  填写说明：带 * 号列为必填；发送时间留空 = 立即发送'
     c.font = Font(bold=True, color='FFFFFF', size=12)
     c.fill = PatternFill('solid', fgColor='3D50CC')
     c.alignment = Alignment(horizontal='center', vertical='center')
