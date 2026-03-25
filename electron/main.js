@@ -20,7 +20,9 @@ function getScriptPath(name) {
   if (!app.isPackaged) {
     return path.join(__dirname, '..', 'python', name)
   }
-  return path.join(process.resourcesPath, 'python', name)
+  // Windows: extraResources 在 resources/ 下
+  const base = process.resourcesPath
+  return path.join(base, 'python', name)
 }
 
 // ─── 加载 dist/（生产）vs localhost:5173（开发）────────────────────────
@@ -117,7 +119,8 @@ ipcMain.handle('download-template', async (event) => {
 ipcMain.handle('send-now', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   const proc = spawn(getPythonPath(), [getScriptPath('app/cli.py'), 'send'], {
-    env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' }),
+    env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }),
+    windowsHide: true,
   })
   proc.stdout.on('data', function(d) {
     win.webContents.send('send-progress', d.toString('utf8'))
@@ -132,36 +135,50 @@ ipcMain.handle('send-now', async (event) => {
 })
 
 ipcMain.handle('send-selected', async (event, taskData) => {
-  // taskData: 前端传来的任务对象数组
   const win = BrowserWindow.fromWebContents(event.sender)
   const jsonArg = Array.isArray(taskData) ? JSON.stringify(taskData) : '[]'
-  const proc = spawn(getPythonPath(), [getScriptPath('app/cli.py'), 'send', '--tasks-json', jsonArg], {
-    env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' }),
-  })
-  proc.stdout.on('data', function(d) {
-    const text = d.toString('utf8')
-    win.webContents.send('send-progress', text)
-    // 解析每行任务结果，发送 per-task 状态更新
-    text.split('\n').forEach(function(line) {
-      const taskMatch = line.match(/^\[(\d+)\/(\d+)\] → (.+?) \[(.+?)\](.*)$/)
-      if (taskMatch) {
-        var target = taskMatch[3].trim()
-        var msgType = taskMatch[4].trim()
-        if (line.includes('✅')) {
-          win.webContents.send('task-status-update', { target: target, msg_type: msgType, status: 'success' })
-        } else if (line.includes('❌')) {
-          var errMsg = line.replace(/.*❌/, '').trim()
-          win.webContents.send('task-status-update', { target: target, msg_type: msgType, status: 'failed', error: errMsg })
+  const pythonBin = getPythonPath()
+  const scriptPath = getScriptPath('app/cli.py')
+  console.log('[send-selected] python:', pythonBin)
+  console.log('[send-selected] script:', scriptPath)
+  console.log('[send-selected] tasks:', jsonArg.slice(0, 80))
+
+  const { execFileSync } = require('child_process')
+  try {
+    const stdout = execFileSync(pythonBin, [scriptPath, 'send', '--tasks-json', jsonArg], {
+      encoding: 'utf8',
+      timeout: 0,
+      env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' }),
+      windowsHide: true,
+    })
+    console.log('[send-selected] stdout length:', stdout.length)
+    // 发送所有输出到日志
+    win.webContents.send('send-progress', stdout)
+    // 逐行解析任务结果
+    stdout.split('\n').forEach(function(line) {
+      if (!line.trim()) return
+      const hasSuccess = line.includes('✅')
+      const hasFailed = line.includes('❌')
+      if (hasSuccess || hasFailed) {
+        const taskMatch = line.match(/^\[(\d+)\/(\d+)\] → (.+?) \[(.+?)\]/)
+        if (taskMatch) {
+          win.webContents.send('task-status-update', {
+            target: taskMatch[3].trim(),
+            msg_type: taskMatch[4].trim(),
+            status: hasSuccess ? 'success' : 'failed',
+          })
         }
       }
     })
-  })
-  proc.stderr.on('data', function(d) {
-    win.webContents.send('send-progress', '[ERROR] ' + d.toString('utf8'))
-  })
-  proc.on('close', function(code) {
-    win.webContents.send('send-done', { code: code })
-  })
+    win.webContents.send('send-done', { code: 0 })
+  } catch(e) {
+    console.error('[send-selected] exception:', e.message)
+    const stderr = e.stderr ? e.stderr.toString() : ''
+    const stdout = e.stdout ? e.stdout.toString() : ''
+    if (stdout) win.webContents.send('send-progress', stdout)
+    if (stderr) win.webContents.send('send-progress', '[ERROR] ' + stderr)
+    win.webContents.send('send-done', { code: e.status || 1, error: e.message })
+  }
   return { ok: true }
 })
 
@@ -177,6 +194,7 @@ ipcMain.handle('daemon-start', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   daemonProcess = spawn(getPythonPath(), [getScriptPath('app/cli.py'), 'daemon'], {
     env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }),
+    windowsHide: true,
   })
   daemonProcess.stdout.on('data', function(d) {
     win.webContents.send('daemon-log', d.toString('utf8'))
