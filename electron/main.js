@@ -27,31 +27,33 @@ function getPythonPath() {
 // 启动时确保 openpyxl 已安装（兜底 afterPack 脚本未运行的场景）
 function ensurePythonDeps() {
   if (!app.isPackaged) return
-  const { execSync } = require('child_process')
-  const bundledPython = getPythonPath()
-  try {
-    execSync(`${bundledPython} -c "import openpyxl"`, { timeout: 5000 })
-    return // already available
-  } catch (_) {}
-
-  // 尝试安装到 bundle lib 目录
-  const libDir = path.join(process.resourcesPath, 'python', 'lib', 'python3.14', 'site-packages')
+  const pythonPath = getPythonPath()
   try {
     require('child_process').execSync(
-      `${bundledPython} -m pip install --target="${libDir}" openpyxl PyYAML 2>&1`,
-      { timeout: 60 * 1000 }
+      `${pythonPath} -c "import openpyxl; print('ok')"`,
+      { timeout: 8000 }
     )
-    console.log('[openpyxl] installed to bundle lib:', libDir)
+    return // openpyxl already available
+  } catch (_) {}
+
+  console.log('[openpyxl] not found, attempting install via pip...')
+  // 优先用 pip install --user（不会破坏系统 Python 环境）
+  const installCmd =
+    `${pythonPath} -m pip install --user openpyxl PyYAML rich 2>&1`
+  try {
+    const out = require('child_process').execSync(installCmd, { timeout: 120 * 1000 })
+    console.log('[openpyxl] install output:', out.toString())
   } catch (e) {
-    console.warn('[openpyxl] install failed, trying user site-packages:', e.message)
-    // 最后 fallback：用系统 pip 强制安装
+    console.error('[openpyxl] pip install --user failed:', e.message)
+    // 最后的 fallback：尝试系统 pip 直接安装到用户目录
     try {
-      require('child_process').execSync(
-        `python3 -m pip install --user openpyxl PyYAML 2>&1`,
-        { timeout: 60 * 1000 }
+      const fallback = require('child_process').execSync(
+        `python3 -m pip install --user openpyxl PyYAML rich 2>&1`,
+        { timeout: 120 * 1000 }
       )
+      console.log('[openpyxl] fallback install output:', fallback.toString())
     } catch (e2) {
-      console.error('[openpyxl] user install also failed:', e2.message)
+      console.error('[openpyxl] all install attempts failed:', e2.message)
     }
   }
 }

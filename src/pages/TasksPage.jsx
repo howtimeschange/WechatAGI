@@ -143,8 +143,8 @@ export default function TasksPage() {
   const toggleOne = (id, currentlyChecked) => {
     setSelected(prev => {
       const s = new Set(prev)
-      if (currentlyChecked) s.delete(id)
-      else s.add(id)
+      if (currentlyChecked) s.add(id)
+      else s.delete(id)
       return s
     })
   }

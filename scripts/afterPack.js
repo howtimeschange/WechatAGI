@@ -1,7 +1,7 @@
 /**
  * afterPack.js — electron-builder hook
- * 在打包完成后，将系统 Python 的 openpyxl / PyYAML / rich 复制到
- * app/Contents/Resources/python/lib/，让打包后的 Python 能 import 它们。
+ * 在打包完成后，将系统 Python 的 openpyxl 等依赖复制到 app bundle 的
+ * Resources/python/lib/<version>/site-packages/，让打包后的 Python 能 import 它们。
  */
 const { execSync } = require('child_process')
 const path = require('path')
@@ -13,7 +13,18 @@ module.exports = function afterPack(context) {
 
   if (platform !== 'Mac OS X') return
 
-  // 找到系统 Python 的 site-packages
+  // 动态检测 Python 版本（如 3.14）
+  let pythonVersion
+  try {
+    pythonVersion = execSync('python3 -c "import sys; print(f\'python{sys.version_info.major}.{sys.version_info.minor}\')"', {
+      encoding: 'utf8'
+    }).trim()
+  } catch {
+    pythonVersion = 'python3.14' // fallback
+  }
+  console.log('[afterPack] Detected Python version:', pythonVersion)
+
+  // 找到系统 Python 的 site-packages（优先 user site-packages）
   let sitePackages
   try {
     sitePackages = execSync(
@@ -21,21 +32,16 @@ module.exports = function afterPack(context) {
       { encoding: 'utf8' }
     ).trim()
   } catch {
-    // fallback: try main system site-packages
     try {
-      sitePackages = execSync(
-        'python3 -c "import sys; print(sys.path[1])"',
-        { encoding: 'utf8' }
-      ).trim()
+      sitePackages = execSync('python3 -c "import sys; print(sys.path[1])"', { encoding: 'utf8' }).trim()
     } catch {
       console.warn('[afterPack] Cannot detect Python site-packages, skipping openpyxl copy')
       return
     }
   }
+  console.log('[afterPack] Source site-packages:', sitePackages)
 
-  console.log('[afterPack] Detected site-packages:', sitePackages)
-
-  // 目标 lib 目录
+  // 目标目录：Resources/python/lib/<version>/site-packages/
   const destLib = path.join(
     appOutDir,
     'WechatSender.app',
@@ -43,14 +49,14 @@ module.exports = function afterPack(context) {
     'Resources',
     'python',
     'lib',
-    'python3.14',
+    pythonVersion,
     'site-packages'
   )
 
   fs.mkdirSync(destLib, { recursive: true })
 
-  // 要打包的包（只取 openpyxl + 其依赖）
-  const pkgs = ['openpyxl', 'PyYAML', 'rich', 'et_xmlfile', 'jinja2', 'markupsafe']
+  // 要打包的包（openpyxl + 其核心依赖）
+  const pkgs = ['openpyxl', 'PyYAML', 'rich', 'et_xmlfile', 'jinja2', 'markupsafe', 'charset_normalizer', 'idna']
 
   for (const pkg of pkgs) {
     const src = path.join(sitePackages, pkg)
@@ -62,7 +68,7 @@ module.exports = function afterPack(context) {
     }
   }
 
-  // 复制 zip_safe marker 文件等
+  // 复制必要文件
   for (const fname of ['easy_install.py', 'site.py']) {
     const src = path.join(sitePackages, fname)
     if (fs.existsSync(src)) {
@@ -70,5 +76,5 @@ module.exports = function afterPack(context) {
     }
   }
 
-  console.log('[afterPack] Done — openpyxl & deps copied to bundle.')
+  console.log(`[afterPack] Done — openpyxl & deps copied to ${destLib}`)
 }
