@@ -55,6 +55,22 @@ export default function TasksPage() {
   const [logs, setLogs] = useState([])
   const [dragging, setDragging] = useState(false)
   const [editTask, setEditTask] = useState(null)
+  const [daemonOn, setDaemonOn] = useState(false)
+
+  // ── 守护进程状态监听 ────────────────────────────────────
+  useEffect(() => {
+    if (!window.api) return
+    window.api.daemonStatus().then(({ running }) => setDaemonOn(running))
+    const unsubLog = window.api.onDaemonLog(data => {
+      const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+      setLogs(prev => [...prev.slice(-300), { text: `[${ts}] ${data.trim()}`, type: 'info', id: Date.now() + Math.random() }])
+    })
+    const unsubStop = window.api.onDaemonStopped(() => {
+      setDaemonOn(false)
+      setLogs(prev => [...prev, { text: `— 守护进程已停止 —`, type: 'info', id: Date.now() }])
+    })
+    return () => { unsubLog?.(); unsubStop?.() }
+  }, [])
 
   // 持久化任务
   useEffect(() => { saveTasks(tasks) }, [tasks])
@@ -267,6 +283,25 @@ export default function TasksPage() {
       <div className="tasks-header">
         <div className="tasks-title-row">
           <h1 className="page-title">📤 发送任务</h1>
+          {/* 守护进程开关（默认关闭，有 send_time 的任务才会自动发送） */}
+          <div className="daemon-toggle-row">
+            <span className={`daemon-dot ${daemonOn ? 'dot-running' : 'dot-stopped'}`} />
+            <span className="daemon-label">{daemonOn ? '守护进程开启' : '守护进程关闭'}</span>
+            <label className="toggle toggle-sm">
+              <input type="checkbox" checked={daemonOn}
+                onChange={async () => {
+                  if (!window.api) { setDaemonOn(v => !v); return }
+                  if (daemonOn) {
+                    await window.api.daemonStop()
+                    setDaemonOn(false)
+                  } else {
+                    await window.api.daemonStart()
+                    setDaemonOn(true)
+                  }
+                }} />
+              <span className="toggle-slider" />
+            </label>
+          </div>
           <div className="header-stats">
             <span className="stat-chip chip-total">共 {stats.total} 条</span>
             {stats.waiting > 0 && <span className="stat-chip chip-wait">待发 {stats.waiting}</span>}

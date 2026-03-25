@@ -303,4 +303,32 @@
 /* status badge 额外 */
 .badge-stopped { background: #F5F5F5; color: #888; }
 
+/* ── 守护进程开关 ─────────────────────────────────── */
+.daemon-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #666;
+}
+
+.daemon-label {
+  color: #888;
+  font-size: 12px;
+}
+
+.toggle-sm .toggle-slider {
+  width: 32px;
+  height: 18px;
+}
+.toggle-sm .toggle-slider::before {
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+}
+.toggle-sm input:checked + .toggle-slider::before {
+  transform: translateX(14px);
+}
+
 @keyframes spin { to { transform: rotate(360deg); } }

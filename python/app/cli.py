@@ -521,8 +521,11 @@ def cmd_daemon(args):
                         except ValueError:
                             pass
 
-                # 判断是否到达发送时间
-                if send_time is not None and now < send_time:
+                # 没有 send_time 的任务留着手动处理（守护进程跳过）
+                if send_time is None:
+                    continue
+
+                if now < send_time:
                     if not status:
                         task_dict["status"] = STATUS_WAITING
                         changed = True

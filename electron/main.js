@@ -43,34 +43,40 @@ function loadMainWindow(win) {
 }
 
 // ─── macOS Automation 权限检测 + 引导授权 ───────────────────────────
+let automationChecked = false
 function checkAutomationPermission() {
-  if (process.platform !== 'darwin') return
+  if (process.platform !== 'darwin' || automationChecked) return
+  automationChecked = true
 
-  const { dialog } = require('electron')
-  const result = require('child_process').spawnSync(
-    'osascript',
-    ['-e', 'tell application "System Events"\n keystroke "test"\n end tell'],
-    { timeout: 5000 }
-  )
-
-  if (result.status === 0) return // 已授权
-
-  const USER_LEVEL = 0
-  dialog.showMessageBox({
-    type: 'warning',
-    title: '需要辅助功能权限',
-    message: '微信发送助手需要「辅助功能」权限才能自动发送微信消息。',
-    detail: '点击「打开系统设置」后，在「辅助功能」列表中找到「微信发送助手」并勾选启用。',
-    buttons: ['打开系统设置', '稍后'],
-    defaultId: 0,
-    cancelId: 1,
-  }).then(({ response }) => {
-    if (response === 0) {
-      require('electron').shell.openExternal(
-        'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation'
+  // 等窗口加载完再检测，不要阻塞启动
+  setTimeout(() => {
+    try {
+      const { dialog, shell } = require('electron')
+      const result = require('child_process').spawnSync(
+        'osascript',
+        ['-e', 'tell application "System Events"\n keystroke "x"\n end tell'],
+        { timeout: 5000 }
       )
-    }
-  })
+      if (result.status === 0) return // 已有权限
+    } catch (_) {}
+
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win || win.isDestroyed()) return
+
+    dialog.showMessageBox(win, {
+      type: 'warning',
+      title: '需要辅助功能权限',
+      message: '微信发送助手需要「辅助功能」权限才能自动发送微信消息。',
+      detail: '点击「打开系统设置」后，在「辅助功能」列表中找到「微信发送助手」并勾选启用。',
+      buttons: ['打开系统设置', '稍后'],
+      defaultId: 0,
+      cancelId: 1,
+    }).then(({ response }) => {
+      if (response === 0) {
+        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Automation')
+      }
+    })
+  }, 2000) // 窗口加载完再检测
 }
 
 // ─── 主进程 ───────────────────────────────────────────────────────────
@@ -235,14 +241,14 @@ ipcMain.handle('daemon-start', async (event) => {
     windowsHide: true,
   })
   daemonProcess.stdout.on('data', function(d) {
-    win.webContents.send('daemon-log', d.toString('utf8'))
+    if (!win.isDestroyed()) win.webContents.send('daemon-log', d.toString('utf8'))
   })
   daemonProcess.stderr.on('data', function(d) {
-    win.webContents.send('daemon-log', '[ERR] ' + d.toString('utf8'))
+    if (!win.isDestroyed()) win.webContents.send('daemon-log', '[ERR] ' + d.toString('utf8'))
   })
   daemonProcess.on('close', function() {
     daemonProcess = null
-    win.webContents.send('daemon-stopped')
+    if (!win.isDestroyed()) win.webContents.send('daemon-stopped')
   })
   return { ok: true }
 })

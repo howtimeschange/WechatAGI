@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Sidebar from './components/Sidebar'
 import TitleBar from './components/TitleBar'
 import TasksPage from './pages/TasksPage'
@@ -15,13 +15,6 @@ const PAGES = {
 export default function App() {
   const [page, setPage] = useState('tasks')
   const PageComp = PAGES[page] || TasksPage
-
-  // 启动时自动拉起守护进程
-  useEffect(() => {
-    if (window.api?.daemonStart) {
-      window.api.daemonStart().catch(() => {})
-    }
-  }, [])
 
   return (
     <div className="app-shell">

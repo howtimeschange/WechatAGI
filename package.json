@@ -31,7 +31,7 @@
   },
   "build": {
     "appId": "com.wechat-sender.app",
-    "productName": "微信发送助手",
+    "productName": "WechatSender",
     "directories": {
       "output": "dist-electron"
     },
