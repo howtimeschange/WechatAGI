@@ -22,7 +22,6 @@ def _real_home() -> Path:
     """返回真实的用户 home 目录，绕过 Python pkg 改写的 $HOME 环境变量。"""
     if sys.platform == "win32":
         return Path(os.environ.get("USERPROFILE", os.environ.get("HOMEDRIVE", "C:\\") + "\\Users\\" + os.environ.get("USERNAME", "")))
-    import os
     return Path(os.path.expanduser("~"))
 
 try:

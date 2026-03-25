@@ -4,6 +4,7 @@ const { spawn, spawnSync } = require('child_process')
 const fs = require('fs')
 const os = require('os')
 
+
 // ─── Python 路径（运行时检测，避免 isPackaged 在模块加载时出错）───────────
 function getPythonPath() {
   if (!app.isPackaged) {
@@ -136,7 +137,12 @@ ipcMain.handle('parse-excel', async (_, bytes) => {
       console.error('[parse-excel] python error:', r.stderr)
       return { error: r.stderr }
     }
-    return JSON.parse(r.stdout)
+    try {
+      return JSON.parse(r.stdout)
+    } catch (e) {
+      console.error('[parse-excel] JSON parse error:', e, 'raw:', r.stdout.slice(0, 200))
+      return { error: '返回数据格式错误: ' + e.message }
+    }
   } catch (e) {
     console.error('[parse-excel] exception:', e)
     return { error: e.message }
