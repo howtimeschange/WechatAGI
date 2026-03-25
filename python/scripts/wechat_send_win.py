@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-微信批量发送助手 — Windows 版批量发送核心
-依赖: pip install uiautomation pyperclip pywin32 Pillow openpyxl PyYAML rich
+微信批量发送助手 — Windows 版（pywinauto 方案）
+依赖: pip install pywinauto psutil pyperclip Pillow openpyxl PyYAML rich
+核心优势：keyboard.send_keys() 用 SendMessage WM_SETTEXT 直接写文本到控件，
+         不走剪贴板，不触发 WeChat 剪贴板监控，无防抖问题。
 用法: python scripts/wechat_send_win.py [--dry]
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -19,69 +22,494 @@ from typing import Optional
 
 def _real_home() -> Path:
     """返回真实用户 home 目录，绕过 Python pkg 改写的 $HOME（macOS）"""
-    import os
     if sys.platform == "win32":
-        return Path(os.environ.get("USERPROFILE", os.environ.get("HOMEDRIVE", "C:\\") + "\\Users\\" + os.environ.get("USERNAME", "")))
+        return Path(os.environ.get("USERPROFILE",
+                                  os.environ.get("HOMEDRIVE", "C:\\") + "\\Users\\" + os.environ.get("USERNAME", "")))
     import pwd
     return Path(pwd.getpwuid(os.getuid()).pw_dir)
 
-# 自动安装缺失的 Windows 自动化依赖
+
+# ─── 依赖安装 ──────────────────────────────────────────
+def _install_and_import(module, package=None):
+    """尝试导入，失败则自动安装"""
+    try:
+        return __import__(module)
+    except ImportError:
+        package = package or module
+        pkg = {"pywinauto": "pywinauto", "psutil": "psutil",
+               "pyperclip": "pyperclip", "Pillow": "Pillow",
+               "openpyxl": "openpyxl", "PyYAML": "PyYAML", "rich": "rich"}
+        pypi_name = pkg.get(package, package)
+        print(f"[信息] 正在安装 {pypi_name}...")
+        r = subprocess.run(
+            [sys.executable, "-m", "pip", "install", pypi_name, "--quiet"],
+            capture_output=True, text=True
+        )
+        if r.returncode != 0:
+            print(f"[ERROR] pip install {pypi_name} 失败: {r.stderr}", file=sys.stderr)
+            sys.exit(1)
+        return __import__(module)
+
+
+# 提前导入（自动安装）
+pywinauto_mod = _install_and_import("pywinauto")
+from pywinauto import Application, keyboard, mouse, Desktop
+from pywinauto.timings import wait_until_passes
+import psutil
+_pyperclip = _install_and_import("pyperclip")
+_pillow = _install_and_import("PIL", "Pillow")
+Image = _pillow.Image
+_pyperclip_extras = {"pywin32": None, "win32clipboard": None, "win32con": None}
 try:
-    import uiautomation as auto
-    import pyperclip
     import win32clipboard
     import win32con
-    from PIL import Image
+    _pyperclip_extras["pywin32"] = True
 except ImportError:
-    print("[信息] 正在安装 Windows 自动化依赖 (使用 Python: " + sys.executable + ")...")
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install",
-         "uiautomation", "pyperclip", "pywin32", "Pillow",
-         "--no-warn-script-location", "-q"],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        print("[ERROR] pip install 失败: " + (result.stderr or result.stdout or "未知错误"), file=sys.stderr)
-        print("[DEBUG] stdout: " + (result.stdout or ""), file=sys.stderr)
-        print("[DEBUG] stderr: " + (result.stderr or ""), file=sys.stderr)
-        sys.exit(1)
-    try:
-        import uiautomation as auto
-        import pyperclip
-        import win32clipboard
-        import win32con
-        from PIL import Image
-    except ImportError as e:
-        print("[ERROR] 依赖安装后仍然无法导入: " + str(e), file=sys.stderr)
-        print("[DEBUG] sys.executable: " + sys.executable, file=sys.stderr)
-        import site
-        print("[DEBUG] site packages: " + str(site.getsitepackages()), file=sys.stderr)
-        sys.exit(1)
+    pass
 
 
-# ─── 剪贴板工具（pyperclip，稳定可靠）────────
+# ─── UTF-8 编码保障 ────────────────────────────────────
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+
+# ─── 剪贴板工具 ────────────────────────────────────────
 def _clipboard_copy(text: str):
-    """写入文本到剪贴板（pyperclip，兼容性好不干扰 WeChat）"""
+    """写入文本到剪贴板（仅在需要粘贴图片时使用）"""
     if not text:
         return
     try:
-        pyperclip.copy(text)
+        _pyperclip.copy(text)
     except Exception as e:
         print(f"[WARN] 剪贴板写入失败: {e}", file=sys.stderr)
 
 
 def _clipboard_clear():
-    """用 pyperclip 写入空字符串清空剪贴板"""
     try:
-        pyperclip.copy("")
+        _pyperclip.copy("")
     except Exception:
         pass
 
-# ─── 配置（从外部 config.yaml 读取） ──────────────────────
+
+# ─── pywinauto 核心工具 ─────────────────────────────────
+
+BACKEND = "uia"   # 默认 UIA；win32 作为兜底
+
+
+def _log(msg: str):
+    if VERBOSE:
+        print(msg)
+
+
+def _window_area(rect) -> int:
+    try:
+        return max(0, rect.width() * rect.height())
+    except Exception:
+        return 0
+
+
+def _safe_enum_windows(backend: str, timeout: float = 2.0):
+    """线程安全枚举桌面窗口，避免卡死"""
+    result = {"windows": None}
+
+    def _worker():
+        try:
+            result["windows"] = Desktop(backend=backend).windows()
+        except Exception:
+            result["windows"] = []
+
+    import threading
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        _log(f"[WARN] 枚举窗口超时（backend={backend}）")
+        return []
+    return result["windows"] or []
+
+
+def _find_wechat_window():
+    """枚举桌面顶层窗口，找到最可能是微信主窗口的那个"""
+    top_windows = _safe_enum_windows(BACKEND, timeout=2.0)
+    if not top_windows:
+        alt = "win32" if BACKEND == "uia" else "uia"
+        top_windows = _safe_enum_windows(alt, timeout=2.0)
+    if not top_windows:
+        return None
+
+    candidates = []
+    for w in top_windows:
+        try:
+            ei = w.element_info
+            name = (ei.name or "")
+            class_name = (ei.class_name or "")
+            pid = getattr(ei, "process_id", None)
+            proc_name = ""
+            if pid:
+                try:
+                    proc_name = (psutil.Process(pid).name() or "").lower()
+                except Exception:
+                    pass
+            # 过滤非微信进程
+            if not any(x in name for x in ("微信", "WeChat", "Weixin")):
+                continue
+            if proc_name not in ("weixin.exe", "wechat.exe", "wechat.exe", ""):
+                if proc_name:  # 有进程名但不是微信
+                    continue
+            # 评分
+            score = 0
+            if class_name in ("WeChatMainWndForPC", "WeChatMainWndForPC64",
+                              "WeChatMainWnd", "MainWindow", "Window"):
+                score += 5
+            area = _window_area(ei.rectangle)
+            score += min(5, area // (800 * 600))
+            candidates.append((score, area, w))
+        except Exception:
+            continue
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    chosen = candidates[0][2]
+    try:
+        ei = chosen.element_info
+        _log(f"[INFO] 选择窗口：title='{ei.name}' class='{ei.class_name}' "
+             f"area={_window_area(ei.rectangle)} pid={getattr(ei, 'process_id', '')}")
+    except Exception:
+        pass
+    return chosen
+
+
+def ensure_wechat_running(start_if_needed: bool = True, timeout: float = 20.0):
+    """确保微信已运行，无窗口则尝试启动"""
+    win = _find_wechat_window()
+    if win is not None:
+        _log("[INFO] 已找到微信主窗口")
+        return
+
+    if not start_if_needed:
+        raise RuntimeError("微信未运行，请先启动微信")
+
+    # 尝试启动
+    candidates = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Tencent\WeChat\WeChat.exe"),
+        os.path.expandvars(r"%PROGRAMFILES%\Tencent\WeChat\WeChat.exe"),
+        os.path.expandvars(r"%PROGRAMFILES(X86)%\Tencent\WeChat\WeChat.exe"),
+        "WeChat.exe",
+    ]
+    started = False
+    for exe in candidates:
+        if not os.path.isfile(exe) if os.path.isabs(exe) else True:
+            # 只检查绝对路径
+            if os.path.isabs(exe) and not os.path.isfile(exe):
+                continue
+        try:
+            _log(f"[INFO] 启动: {exe}")
+            subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            started = True
+            break
+        except FileNotFoundError:
+            continue
+
+    if not started:
+        # 最后一个候选：直接用 start 命令
+        try:
+            subprocess.Popen(["cmd", "/c", "start", "", "WeChat.exe"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            started = True
+        except Exception:
+            pass
+
+    # 等待窗口出现
+    def _connected():
+        return _find_wechat_window() is not None
+
+    try:
+        wait_until_passes(timeout, 1.0, _connected)
+    except Exception:
+        raise RuntimeError(f"等待微信窗口超时（{timeout}s），请手动启动微信")
+
+
+def attach_wechat(timeout: float = 20.0):
+    """附着到微信窗口，返回 (app, main_window)"""
+    ensure_wechat_running(start_if_needed=True, timeout=timeout)
+    chosen = _find_wechat_window()
+    if chosen is None:
+        raise RuntimeError("无法找到微信主窗口")
+
+    app = Application(backend=BACKEND)
+    try:
+        app.connect(handle=chosen.handle, timeout=2)
+        _log("[INFO] 已通过句柄附着到微信")
+    except Exception:
+        try:
+            app.connect(title_re="微信|WeChat|Weixin", timeout=2)
+            _log("[INFO] 已通过标题附着到微信")
+        except Exception:
+            app.connect(path_re=r"Weixin\.exe|WeChat\.exe", timeout=2)
+            _log("[INFO] 已通过路径附着到微信")
+
+    main_win = app.top_window()
+
+    # 验证确实是微信
+    name = (main_win.element_info.name or "").lower()
+    if not ("微信" in name or "wechat" in name or "weixin" in name):
+        main_win = app.window(title_re="微信|WeChat|Weixin")
+
+    wrapper = main_win.wrapper_object()
+    try:
+        if getattr(wrapper, "is_minimized", None) and wrapper.is_minimized():
+            _log("[INFO] 还原最小化的微信窗口")
+            wrapper.restore()
+    except Exception:
+        pass
+
+    _log("[INFO] 聚焦微信窗口")
+    try:
+        wrapper.set_focus()
+        if hasattr(wrapper, "set_keyboard_focus"):
+            wrapper.set_keyboard_focus()
+    except Exception:
+        pass
+
+    time.sleep(0.3)
+    return app, main_win
+
+
+# ─── 搜索 & 发送 ────────────────────────────────────────
+
+def _focus_search_edit(main_win):
+    """尝试直接聚焦搜索框 Edit 控件"""
+    try:
+        edits = main_win.descendants(control_type="Edit")
+    except Exception:
+        edits = []
+    for edit in edits[:5]:
+        name = (getattr(edit.element_info, "name", "") or "").lower()
+        if ("search" in name or "搜索" in name or "查找" in name or name == ""):
+            try:
+                edit.set_focus()
+                _log(f"[INFO] 已聚焦搜索框 Edit，name='{name}'")
+                return True
+            except Exception:
+                continue
+    return False
+
+
+def focus_search_and_open_chat(main_win, friend_name: str, delay: float = 0.25):
+    """聚焦全局搜索框，输入好友名，回车打开聊天"""
+    main_win.set_focus()
+    time.sleep(0.2)
+
+    # 尝试快捷键
+    for combo in ("^f", "^k"):
+        _log(f"[INFO] 发送 {combo} 聚焦搜索框")
+        keyboard.send_keys(combo)
+        time.sleep(delay)
+        keyboard.send_keys("^a{BACKSPACE}")
+        time.sleep(delay)
+        if _focus_search_edit(main_win):
+            break
+
+    # 如果快捷键没效果，尝试直接聚焦 Edit 控件
+    if not _focus_search_edit(main_win):
+        _log("[WARN] 快捷键未能聚焦搜索框，直接输入")
+
+    # 清空搜索框
+    keyboard.send_keys("^a{BACKSPACE}")
+    time.sleep(0.1)
+
+    # 用 pywinauto 直接打字（不走剪贴板！SendMessage WM_SETTEXT，不触发 WeChat 监控）
+    _log(f"[INFO] 输入搜索词：{friend_name}")
+    keyboard.send_keys(friend_name, with_spaces=True)
+    time.sleep(delay)
+
+    _log("[INFO] 回车打开聊天")
+    keyboard.send_keys("{ENTER}")
+    time.sleep(delay)
+
+
+def _focus_message_input(main_win):
+    """尝试聚焦聊天输入框，返回是否成功"""
+    try:
+        ctrls = main_win.descendants()
+    except Exception:
+        ctrls = []
+
+    try:
+        rect_win = main_win.element_info.rectangle
+        bottom_win = rect_win.bottom
+    except Exception:
+        bottom_win = 99999
+
+    scored = []
+    for c in ctrls:
+        try:
+            ei = c.element_info
+            ct = getattr(ei, "control_type", "") or ""
+            cn = getattr(ei, "class_name", "") or ""
+            nm = getattr(ei, "name", "") or ""
+            rect = getattr(ei, "rectangle", None)
+            if ct not in ("Edit", "Document", "Text") and "RichEdit" not in cn:
+                continue
+            if rect is None:
+                continue
+            area = _window_area(rect)
+            distance = max(0, bottom_win - rect.bottom)
+            score = area - distance * 10
+            scored.append((score, rect, c, ct, cn, nm))
+        except Exception:
+            continue
+
+    if not scored:
+        _log("[WARN] 未找到候选输入控件")
+        return False
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    for score, rect, ctrl, ct, cn, nm in scored[:5]:
+        try:
+            _log(f"[INFO] 尝试聚焦输入控件 type={ct} class={cn} name={nm}")
+            ctrl.set_focus()
+            return True
+        except Exception:
+            # set_focus 失败，尝试点击控件中心
+            x = int((rect.left + rect.right) / 2)
+            y = int((rect.top + rect.bottom) / 2)
+            mouse.click(button="left", coords=(x, y))
+            return True
+    return False
+
+
+def _click_bottom_chat_area(main_win, clicks: int = 3):
+    """点击聊天窗口底部区域以获取焦点"""
+    try:
+        rect = main_win.element_info.rectangle
+        cx = int((rect.left + rect.right) / 2)
+        for i in range(clicks):
+            y = int(rect.bottom - 80 - i * 40)
+            _log(f"[DEBUG] 点击聊天底部区域 ({cx}, {y})")
+            mouse.click(button="left", coords=(cx, y))
+            time.sleep(0.1)
+    except Exception as e:
+        _log(f"[WARN] 点击聊天底部失败: {e}")
+
+
+def send_message_to_current_chat(main_win, message: str,
+                                 delay: float = 0.12,
+                                 press_enter_to_send: bool = True,
+                                 use_paste: bool = False):
+    """
+    向当前聊天窗口输入消息并发送。
+    use_paste=True 时用 Ctrl+V（走剪贴板），False 时直接打字。
+    推荐 False：pywinauto keyboard.send_keys 直接写文本到控件，完全不碰剪贴板。
+    """
+    # 聚焦输入框
+    for attempt in range(3):
+        if _focus_message_input(main_win):
+            break
+        _click_bottom_chat_area(main_win, clicks=2)
+        time.sleep(0.1)
+        if _focus_message_input(main_win):
+            break
+
+    time.sleep(0.05)
+    keyboard.send_keys("{END}")   # 确保光标在末尾
+    time.sleep(0.08)
+
+    # 输入消息：优先直接打字（不走剪贴板，无防抖问题）
+    _log(f"[INFO] 输入消息：{message[:20]}{'...' if len(message) > 20 else ''}")
+    if use_paste:
+        # 备选：剪贴板粘贴（图片必须走剪贴板，长文本粘贴也更快）
+        _clipboard_copy(message)
+        time.sleep(0.05)
+        keyboard.send_keys("^v")
+    else:
+        keyboard.send_keys(message, with_spaces=True)
+
+    time.sleep(delay)
+
+    # 发送
+    if press_enter_to_send:
+        keyboard.send_keys("{ENTER}")
+    else:
+        keyboard.send_keys("^{ENTER}")
+    time.sleep(delay)
+
+
+def search_contact(name: str, max_retries: int = 2):
+    """搜索并打开与指定联系人的聊天窗口"""
+    app, main_win = attach_wechat()
+
+    for attempt in range(max_retries):
+        _log(f"[INFO] search_contact attempt {attempt + 1}: {name}")
+        focus_search_and_open_chat(main_win, name)
+        time.sleep(0.8)
+        return
+
+    raise RuntimeError(f"未找到联系人 [{name}]，请手动确认微信窗口状态")
+
+
+def send_text(text: str):
+    """发送文字消息（直接打字，不走剪贴板）"""
+    send_message_to_current_chat(None, text, delay=0.12,
+                                 press_enter_to_send=True, use_paste=False)
+
+
+def send_image(image_path: str):
+    """发送图片（必须走剪贴板）"""
+    img = Image.open(image_path).convert("RGB")
+    _clipboard_clear()
+    try:
+        if "pywin32" in _pyperclip_extras and win32clipboard:
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32con.CF_BITMAP, img)
+            win32clipboard.CloseClipboard()
+        else:
+            # 兜底：用 pyperclip 写文件路径
+            _clipboard_copy(image_path)
+    except Exception as e:
+        print(f"[WARN] 图片剪贴板写入失败: {e}", file=sys.stderr)
+        _clipboard_copy(image_path)
+
+    time.sleep(0.15)
+    keyboard.send_keys("^v")
+    time.sleep(0.25)
+    keyboard.send_keys("{ENTER}")
+
+
+def send_text_with_image(text: str, image_path: str):
+    """发送文字+图片"""
+    _clipboard_copy(text)
+    time.sleep(0.05)
+    keyboard.send_keys("^v")
+    time.sleep(0.2)
+    send_image(image_path)
+
+
+def call_send(target: str, msg_type: str, text: str, image_path: str):
+    """统一发送入口（由 cli.py 调用）"""
+    search_contact(target)
+    if msg_type == "文字":
+        send_text(text)
+    elif msg_type == "图片":
+        send_image(image_path)
+    elif msg_type == "文字+图片":
+        send_text_with_image(text, image_path)
+    else:
+        raise ValueError(f"不支持的消息类型: {msg_type}")
+
+
+# ─── 配置（从外部 config.json 读取）──────────────────────
 
 ROOT = Path(__file__).resolve().parents[1]
 CFG_PATH = _real_home() / ".wechat-sender" / "config.json"
-XLSX_PATH = None  # 从 config 读取
+XLSX_PATH = None
 
 SHEET_TASKS = "发送任务"
 HEADER_ROW = 2
@@ -173,94 +601,6 @@ def should_send(task: Task, now: datetime) -> bool:
     return now >= task.send_time
 
 
-# ─── Windows 微信自动化 ─────────────────────────────────
-
-WECHAT_WIN_TITLE = "微信"
-
-
-def check_wechat() -> bool:
-    win = auto.WindowControl(Name=WECHAT_WIN_TITLE, searchDepth=1)
-    return win.Exists(0)
-
-
-def activate_wechat():
-    win = auto.WindowControl(Name=WECHAT_WIN_TITLE, searchDepth=1)
-    if not win.Exists(3):
-        raise RuntimeError("未找到微信窗口，请先打开并登录 PC 微信")
-    win.SetActive()
-    time.sleep(0.4)
-    return win
-
-
-def search_contact(name: str, max_retries: int = 2):
-    """搜索联系人（带重试）
-
-    流程：Ctrl+F → 粘贴搜索词 → 等300ms防抖窗口 → ↓选本地联系人 → Enter
-    WeChat 搜索框有 ~300ms 防抖逻辑，粘贴后立即 Enter 会触发互联网搜索。
-    正确时序：粘贴 → 等待防抖 → ↓ → Enter"""
-    for attempt in range(max_retries):
-        activate_wechat()
-        time.sleep(0.5)
-        auto.SendKeys("{Ctrl}f")
-        time.sleep(0.3)
-        # 清空剪贴板后立即写入搜索词（防止残留内容混入）
-        _clipboard_clear()
-        _clipboard_copy(name)
-        time.sleep(0.1)
-        auto.SendKeys("{Ctrl}v")
-        time.sleep(0.35)   # 等防抖窗口过去（WeChat debounce ≈ 300ms）
-        auto.SendKeys("{Down}")   # 跳过硬讯搜索条目，选第一项本地联系人
-        time.sleep(0.05)
-        auto.SendKeys("{Enter}")
-        time.sleep(0.8)
-        return
-
-    raise RuntimeError(f"未找到联系人 [{name}]，请手动确认微信窗口状态")
-
-
-def send_text(text: str):
-    _clipboard_copy(text)
-    time.sleep(0.1)
-    auto.SendKeys("{Ctrl}v")
-    time.sleep(0.2)
-    auto.SendKeys("{Enter}")
-
-
-def send_image(image_path: str):
-    img = Image.open(image_path).convert("RGB")
-    _clipboard_clear()
-    try:
-        win32clipboard.OpenClipboard()
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardData(win32con.CF_BITMAP, img)
-    finally:
-        win32clipboard.CloseClipboard()
-    time.sleep(0.15)
-    auto.SendKeys("{Ctrl}v")
-    time.sleep(0.25)
-    auto.SendKeys("{Enter}")
-
-
-def send_text_with_image(text: str, image_path: str):
-    _clipboard_copy(text)
-    time.sleep(0.1)
-    auto.SendKeys("{Ctrl}v")
-    time.sleep(0.2)
-    send_image(image_path)
-
-
-def call_send(target: str, msg_type: str, text: str, image_path: str):
-    search_contact(target)
-    if msg_type == "文字":
-        send_text(text)
-    elif msg_type == "图片":
-        send_image(image_path)
-    elif msg_type == "文字+图片":
-        send_text_with_image(text, image_path)
-    else:
-        raise ValueError(f"不支持的消息类型: {msg_type}")
-
-
 # ─── 主发送逻辑 ─────────────────────────────────────────
 
 def batch_send(dry_run: bool = False, send_interval: float = 5,
@@ -286,7 +626,7 @@ def batch_send(dry_run: bool = False, send_interval: float = 5,
         print("⏳ 没有需要发送的任务")
         return
 
-    print(f"📤 开始发送 {len(pending)} 条任务...")
+    print(f"📤 开始发送 {len(pending)} 条任务（pywinauto 方案）...")
     if dry_run:
         print("⚠️  模拟运行模式，不会真实发送")
 
@@ -302,7 +642,8 @@ def batch_send(dry_run: bool = False, send_interval: float = 5,
             if sleep_secs > 0:
                 print(f"⏳ 达到每分钟 {max_per_minute} 条限制，等待 {sleep_secs:.0f}s...")
                 time.sleep(sleep_secs)
-                sent_times = [t for t in sent_times if t > datetime.now() - timedelta(minutes=1)]
+                sent_times = [t for t in sent_times
+                              if t > datetime.now() - timedelta(minutes=1)]
 
         print(f"[{i+1}/{len(pending)}] → {task.target} [{task.msg_type}]", end="")
 
@@ -339,18 +680,25 @@ def batch_send(dry_run: bool = False, send_interval: float = 5,
     print(f"\n✅ 完成！成功 {success_count} 条，失败 {fail_count} 条")
 
 
+# ─── 全局开关 ───────────────────────────────────────────
+VERBOSE = False
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="微信批量发送 — Windows 版")
+    parser = argparse.ArgumentParser(description="微信批量发送 — Windows 版（pywinauto）")
     parser.add_argument("--dry", action="store_true", help="模拟运行")
-    parser.add_argument("--call-single", action="store_true", help="单次发送（由 cli.py call_sender 调用）")
+    parser.add_argument("--call-single", action="store_true",
+                        help="单次发送（由 cli.py call_sender 调用）")
     parser.add_argument("--target", type=str, help="发送目标")
     parser.add_argument("--msg-type", type=str, help="消息类型")
     parser.add_argument("--text", type=str, help="文字内容")
     parser.add_argument("--image-path", type=str, default="", help="图片路径")
+    parser.add_argument("--verbose", action="store_true", help="详细日志")
     args = parser.parse_args()
 
+    VERBOSE = args.verbose
+
     if args.call_single:
-        # 单次发送模式（替代 importlib 直接调用 call_send）
         if not args.target or not args.msg_type:
             print("[ERROR] --call-single 需要 --target 和 --msg-type", file=sys.stderr)
             sys.exit(1)
@@ -374,4 +722,3 @@ if __name__ == "__main__":
         max_per_minute=max_per_minute,
         xlsx_path=xlsx_path,
     )
-
