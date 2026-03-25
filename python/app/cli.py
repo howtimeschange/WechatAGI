@@ -142,13 +142,13 @@ def set_status(ws, cols, row: int, status: str):
 
 
 def validate_task(task: Task):
-    if task.app and task.app != "微信":
-        raise ValueError(f"不支持的应用: {task.app}（当前仅支持微信）")
+    # 当前仅支持微信自动化，忽略 app 字段
     if not task.target:
         raise ValueError("联系人/群聊不能为空")
-    if task.msg_type not in {"文字", "图片", "文字+图片", "文字 "}:
-        raise ValueError(f"不支持的消息类型: {task.msg_type}")
-    if task.msg_type in {"文字", "文字+图片", "文字 "} and not task.text:
+    _valid_types = {"文字", "图片", "文字+图片"}
+    if task.msg_type not in _valid_types:
+        raise ValueError(f"不支持的消息类型: {task.msg_type}（仅支持：文字/图片/文字+图片）")
+    if task.msg_type in {"文字", "文字+图片"} and not task.text:
         raise ValueError("文字内容不能为空")
     if task.msg_type in {"图片", "文字+图片"}:
         if not task.image_path:
