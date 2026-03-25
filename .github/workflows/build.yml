@@ -18,47 +18,37 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Download and bundle Python 3.12 for macOS
+      - name: Install and bundle Python 3.12 via Homebrew
         run: |
+          brew install python@3.12
+
+          # Homebrew Cellar 路径（无尾部斜杠）
+          PYTHON_CELLAR=$(brew --cellar python@3.12)
+          echo "Cellar: $PYTHON_CELLAR"
+
           BUNDLE_DIR="python/bundle"
-          FRAMEWORK_DIR="$BUNDLE_DIR/Python.framework"
-          # python.org 提供 .pkg（XAR 格式），包含 Framework
-          PKG_URL="https://www.python.org/ftp/python/3.12.9/python-3.12.9-macos11.pkg"
+          mkdir -p "$BUNDLE_DIR"
+          cp -R "$PYTHON_CELLAR" "$BUNDLE_DIR/Cellar_python"
 
-          if [ ! -f "$FRAMEWORK_DIR/Versions/3.12/bin/python3.12" ]; then
-            echo "Downloading Python 3.12 .pkg..."
-            curl -sL "$PKG_URL" -o /tmp/python-3.12.pkg
-            echo "Extracting XAR package..."
-            mkdir -p /tmp/python-extract
-            xar -xf /tmp/python-3.12.pkg -C /tmp/python-extract
-            # .pkg 内 Payload 是 cpio+gzip 压缩的 Python.framework
-            mkdir -p "$FRAMEWORK_DIR"
-            cat /tmp/python-extract/*.pkg/Payload 2>/dev/null | gzip -dc | cpio -idm -p "$FRAMEWORK_DIR" 2>&1 | tail -3
-            # 如果上面的方式失败，尝试直接复制
-            if [ ! -f "$FRAMEWORK_DIR/Versions/3.12/bin/python3.12" ]; then
-              FRAMEWORK_SRC=$(find /tmp/python-extract -name "Python.framework" -type d 2>/dev/null | head -1)
-              if [ -n "$FRAMEWORK_SRC" ]; then
-                cp -R "$FRAMEWORK_SRC" "$FRAMEWORK_DIR"
-              fi
-            fi
-            echo "Bundle framework:"
-            ls "$FRAMEWORK_DIR/Versions/3.12/bin/" 2>/dev/null | grep python || echo "NOT FOUND"
-            rm -rf /tmp/python-extract /tmp/python-3.12.pkg
-          else
-            echo "Python already bundled, skipping."
-          fi
+          # 找到版本目录（如 3.12.12_2）
+          PYTHON_VERSION_SUBDIR=$(ls "$BUNDLE_DIR/Cellar_python/" | grep python@3.12 | head -1)
+          echo "Version subdir: $PYTHON_VERSION_SUBDIR"
+          PYTHON_BASE="$BUNDLE_DIR/Cellar_python/$PYTHON_VERSION_SUBDIR"
 
-          if [ -f "$FRAMEWORK_DIR/Versions/3.12/bin/python3.12" ]; then
-            echo "Installing openpyxl..."
-            "$FRAMEWORK_DIR/Versions/3.12/bin/python3.12" -m pip install openpyxl --quiet
-            echo "Done. Python version:"
-            "$FRAMEWORK_DIR/Versions/3.12/bin/python3.12" --version
-          else
-            echo "ERROR: python3.12 not found in bundle"
-            ls "$FRAMEWORK_DIR/" 2>/dev/null || echo "Framework dir empty"
-            find "$BUNDLE_DIR" -name "python*" -type f 2>/dev/null | head -5
-            exit 1
-          fi
+          # 创建 python3.12 符号链接
+          mkdir -p "$BUNDLE_DIR/bin"
+          ln -sf "$PYTHON_BASE/bin/python3.12" "$BUNDLE_DIR/bin/python3.12"
+          ln -sf "$PYTHON_BASE/bin/pip3" "$BUNDLE_DIR/bin/pip3" 2>/dev/null || true
+
+          echo "Bundle contents:"
+          ls "$BUNDLE_DIR/"
+          echo "Symlink:"
+          ls -la "$BUNDLE_DIR/bin/python3.12"
+
+          echo "Installing openpyxl..."
+          "$BUNDLE_DIR/bin/python3.12" -m pip install openpyxl --quiet
+          echo "Done. Python version:"
+          "$BUNDLE_DIR/bin/python3.12" --version
 
       - name: Install Node deps
         run: npm ci
