@@ -59,7 +59,7 @@ except ImportError:
         sys.exit(1)
 
 
-# ─── 剪贴板工具（win32clipboard 更可靠，替代 pyperclip）──────────
+# ─── 剪贴板工具（win32clipboard 直调，pyperclip 作 fallback）────────
 def _clipboard_clear():
     """清空剪贴板内容"""
     try:
@@ -71,18 +71,21 @@ def _clipboard_clear():
 
 
 def _clipboard_copy(text: str):
-    """写入文本到剪贴板（win32clipboard 直调，避免 pyperclip 在某些环境失效）"""
+    """写入文本到剪贴板（优先 win32clipboard，失败则 fallback 到 pyperclip）"""
     _clipboard_clear()
+    # 优先用 win32clipboard（Unicode 支持最好）
     try:
         win32clipboard.OpenClipboard()
         win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
         win32clipboard.CloseClipboard()
+        return
     except Exception:
-        # fallback: pyperclip
-        try:
-            pyperclip.copy(text)
-        except Exception:
-            pass
+        pass
+    # fallback: pyperclip（跨平台兼容性好）
+    try:
+        pyperclip.copy(text)
+    except Exception as e:
+        print(f"[WARN] 剪贴板写入失败: {e}", file=sys.stderr)
 
 # ─── 配置（从外部 config.yaml 读取） ──────────────────────
 
@@ -199,20 +202,42 @@ def activate_wechat():
     return win
 
 
-def search_contact(name: str):
-    # 确保微信窗口在前台并获取焦点
-    activate_wechat()
-    time.sleep(0.3)
-    # 打开搜索框（Ctrl+F）
-    auto.SendKeys("{Ctrl}f")
-    time.sleep(0.35)
-    # 清剪贴板后写入搜索词，避免残留内容混入
-    _clipboard_copy(name)
-    time.sleep(0.1)
-    auto.SendKeys("{Ctrl}v")
-    time.sleep(0.35)
-    auto.SendKeys("{Enter}")
-    time.sleep(0.6)
+def search_contact(name: str, max_retries: int = 2):
+    """搜索联系人（带重试，确保剪贴板不混入残留内容）"""
+    for attempt in range(max_retries):
+        # 确保主窗口在前台
+        activate_wechat()
+        time.sleep(0.4)
+
+        # 打开搜索框：Ctrl+F 唤起全局搜索
+        auto.SendKeys("{Ctrl}f")
+        time.sleep(0.4)
+
+        # 清剪贴板后再写入本次搜索词
+        _clipboard_copy(name)
+        time.sleep(0.15)
+        auto.SendKeys("{Ctrl}v")
+        time.sleep(0.4)
+        auto.SendKeys("{Enter}")
+        time.sleep(0.8)
+
+        # 验证搜索结果：找同名 ListItem，点击选中
+        try:
+            list_item = auto.ListItemControl(Name=name, searchDepth=6)
+            if list_item.Exists(2):
+                list_item.Click()
+                time.sleep(0.4)
+                return  # 成功
+        except Exception:
+            pass
+
+        # 重试前：按 Escape 关闭搜索框，恢复状态
+        auto.SendKeys("{Esc}")
+        time.sleep(0.3)
+        if attempt < max_retries - 1:
+            time.sleep(0.5)
+
+    raise RuntimeError(f"未找到联系人 [{name}]，请手动确认微信窗口状态")
 
 
 def send_text(text: str):
