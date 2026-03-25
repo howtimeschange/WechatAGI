@@ -45,33 +45,29 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Download Python standalone
+      - name: Download, install Python + openpyxl, bundle into build
         run: |
-          $pythonZip = "python-3.12.9-embed-amd64.zip"
           $pythonDir = "python-3.12.9-embed-amd64"
+          $pythonZip = "$pythonDir.zip"
+          $bundleDir = "python\bundle"
           if (!(Test-Path $pythonDir)) {
+            Write-Host "Downloading Python standalone..."
             curl -sL "https://www.python.org/ftp/python/3.12.9/$pythonZip" -o $pythonZip
             Expand-Archive -Force $pythonZip .
             Remove-Item $pythonZip
           }
-
-      - name: Install pip and openpyxl
-        run: |
-          $pythonDir = "python-3.12.9-embed-amd64"
-          # bootstrap pip
+          Write-Host "Installing pip..."
           $pipInstaller = "get-pip.py"
           curl -sL "https://bootstrap.pypa.io/get-pip.py" -o $pipInstaller
           & "$pythonDir\python.exe" $pipInstaller
           Remove-Item $pipInstaller
-          # install openpyxl + dependencies
+          Write-Host "Installing openpyxl..."
           & "$pythonDir\Scripts\pip.exe" install openpyxl
-
-      - name: Bundle Python into build
-        run: |
-          $pythonDir = "python-3.12.9-embed-amd64"
-          # Copy bundled Python into build/python/ so electron-builder picks it up
-          mkdir -Force "python\bundle"
-          Copy-Item "$pythonDir\*" "python\bundle\" -Recurse
+          Write-Host "Bundling into python/bundle..."
+          mkdir -Force $bundleDir
+          Copy-Item "$pythonDir\*" "$bundleDir\" -Recurse -Force
+          Write-Host "Done. Bundle contents:"
+          Get-ChildItem $bundleDir | Select-Object Name
 
       - name: Install Node deps
         run: npm ci
