@@ -235,6 +235,32 @@ ipcMain.handle('remove-schedule', async (_, id) => {
   return { ok: true }
 })
 
+// ── 任务持久化：GUI 任务同步写回 Excel，供 daemon 读取 ──────────────────
+
+
+// ── GUI 任务同步：写任务列表到 gui_tasks.json（daemon 会读取）─────────────
+ipcMain.handle('save-gui-tasks', async (_, taskList) => {
+  try {
+    const dir = path.join(os.homedir(), '.wechat-sender')
+    fs.mkdirSync(dir, { recursive: true })
+    const f = path.join(dir, 'gui_tasks.json')
+    fs.writeFileSync(f, JSON.stringify(taskList, null, 2), 'utf8')
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, err: e.message }
+  }
+})
+
+ipcMain.handle('load-gui-tasks', async () => {
+  try {
+    const f = path.join(os.homedir(), '.wechat-sender', 'gui_tasks.json')
+    if (fs.existsSync(f)) {
+      return JSON.parse(fs.readFileSync(f, 'utf8'))
+    }
+  } catch (_) {}
+  return []
+})
+
 ipcMain.handle('pick-file', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   const r = await dialog.showOpenDialog(win, {

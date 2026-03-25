@@ -83,7 +83,9 @@ export default function TasksPage() {
         return
       }
       const newTasks = result.map(r => ({ ...r, id: uid(), status: 'waiting' }))
-      setTasks(prev => [...prev, ...newTasks])
+      const allTasks = [...prev, ...newTasks]
+      window.api.saveGuiTasks(allTasks)
+      setTasks(allTasks)
       setSelected(new Set())
     } catch (e) {
       alert('解析失败：' + e.message)
@@ -183,11 +185,15 @@ export default function TasksPage() {
         })
       })
       const unsub3 = window.api.onTaskStatusUpdate(({ target, msg_type, status, error }) => {
-        setTasks(prev => prev.map(t =>
-          t.target === target && t.msg_type === msg_type
-            ? { ...t, status: status === 'success' ? 'success' : 'failed' }
-            : t
-        ))
+        setTasks(prev => {
+          const updated = prev.map(t =>
+            t.target === target && t.msg_type === msg_type
+              ? { ...t, status: status === 'success' ? 'success' : 'failed' }
+              : t
+          )
+          window.api.saveGuiTasks(updated)
+          return updated
+        })
       })
       const unsub2 = window.api.onSendDone(() => {
         setSending(false)

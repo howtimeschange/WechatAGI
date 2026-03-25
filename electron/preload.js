@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('api', {
   // 定时任务
   addSchedule: (schedule) => ipcRenderer.invoke('add-schedule', schedule),
   removeSchedule: (id) => ipcRenderer.invoke('remove-schedule', id),
+  saveGuiTasks: (tasks) => ipcRenderer.invoke('save-gui-tasks', tasks),
 
   // 文件
   pickFile: () => ipcRenderer.invoke('pick-file'),
