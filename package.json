@@ -7,9 +7,9 @@
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build",
     "electron": "electron .",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist": "npm run build && electron-builder --mac --win"
+    "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "dist:win": "npm run build && electron-builder --win --publish never",
+    "dist": "electron-builder --mac --publish never && electron-builder --win --publish never"
   },
   "author": "wechat-sender",
   "license": "MIT",
@@ -87,6 +87,7 @@
         "AppImage"
       ],
       "icon": "assets/icon.png"
-    }
+    },
+    "publish": null
   }
 }
