@@ -71,13 +71,14 @@ jobs:
           $pyVersion = "3.12.13"
           $base = "https://github.com/astral-sh/python-build-standalone/releases/download/$version"
           $file = "cpython-$pyVersion+$version-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
+          $tmp = "$env:TEMP\$file"
           $dest = "python\bundle"
-          Write-Host "Downloading Windows Python ${pyVersion}..."
-          curl -L -o /tmp/$file "$base/$file" --progress-bar
+          Write-Host "Downloading Windows Python ${pyVersion} to ${tmp}..."
+          curl -L -o $tmp "$base/$file" --progress-bar
           Write-Host "Extracting..."
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          tar -xzf /tmp/$file -C $dest --strip-components=1
-          Remove-Item /tmp/$file
+          tar -xzf $tmp -C $dest --strip-components=1
+          Remove-Item $tmp
           Write-Host "Python:"
           Get-ChildItem "$dest" -Name
           Write-Host "Installing openpyxl..."
