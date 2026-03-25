@@ -257,10 +257,12 @@ ipcMain.handle('send-selected', async (event, taskData) => {
   } catch(e) {
     console.error('[send-selected] exception:', e.message)
     // execFileSync throws with message like "Command failed: python3 ... exited with 1"
-    // Capture as much context as available
+    // Extract real exit code from message (format: "... exited with N")
     const msg = e.message || String(e)
+    const exitMatch = msg.match(/exited with (\d+)/)
+    const code = exitMatch ? parseInt(exitMatch[1], 10) : 1
     win.webContents.send('send-progress', '[ERROR] ' + msg)
-    win.webContents.send('send-done', { code: 1, error: msg })
+    win.webContents.send('send-done', { code, error: msg })
   }
   return { ok: true }
 })
