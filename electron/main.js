@@ -14,7 +14,12 @@ function getPythonPath() {
   if (process.platform === 'win32') {
     return path.join(base, 'python.exe')
   }
-  // macOS: Python.framework 结构
+  // macOS: Homebrew 风格的 Cellar bundle（bin/python3.12）
+  const cellaredBin = path.join(base, 'bin', 'python3.12')
+  if (fs.existsSync(cellaredBin)) {
+    return cellaredBin
+  }
+  // 回退：Framework 结构（旧版 CI 产物）
   return path.join(base, 'Python.framework', 'Versions', '3.12', 'bin', 'python3')
 }
 

@@ -18,29 +18,44 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Python 3.12 via Homebrew + bundle openpyxl for macOS
+      - name: Bundle Python 3.12 for macOS (Homebrew + relocatable copy)
         run: |
-          FRAMEWORK_DST="python/bundle/Python.framework"
-
-          if [ ! -f "$FRAMEWORK_DST/Versions/3.12/Python" ]; then
+          BUNDLE_DIR="python/bundle"
+          if [ ! -f "$BUNDLE_DIR/bin/python3.12" ]; then
             echo "Installing Python 3.12 via Homebrew..."
             brew install python@3.12
-            PYTHON_PREFIX=$(brew --prefix python@3.12)
-            FRAMEWORK_SRC="$PYTHON_PREFIX/Frameworks/Python.framework"
-            echo "Python.framework at: $FRAMEWORK_SRC"
-            ls "$FRAMEWORK_SRC/Versions/" 2>/dev/null || echo "NOT FOUND"
-            echo "Copying Python.framework to bundle..."
-            mkdir -p "python/bundle"
-            cp -R "$FRAMEWORK_SRC" "$FRAMEWORK_DST"
-            echo "Python.framework copied"
+
+            # 复制整个 Cellar python@3.12 目录（包含所有动态库和依赖）
+            PYTHON_VERSION=$(brew --cellar python@3.12)
+            echo "Python at: $PYTHON_VERSION"
+            mkdir -p "$BUNDLE_DIR"
+            echo "Copying Python installation (this may take a minute)..."
+            cp -R "$PYTHON_VERSION" "$BUNDLE_DIR/Cellar_python" 2>/dev/null || true
+
+            # 复制 Homebrew Cellar 的 tcl-tk（tkinter 需要）
+            if [ -d "$(brew --cellar)/tcl-tk" ]; then
+              cp -R "$(brew --cellar)/tcl-tk" "$BUNDLE_DIR/Cellar_tcl-tk" 2>/dev/null || true
+            fi
+
+            # 建立 python3.12 符号链接
+            PYTHON_INSTALLED=$(ls -d $BUNDLE_DIR/Cellar_python/python@3.12/*/ 2>/dev/null | head -1)
+            if [ -n "$PYTHON_INSTALLED" ]; then
+              mkdir -p "$BUNDLE_DIR/bin"
+              ln -sf "$PYTHON_INSTALLED/bin/python3.12" "$BUNDLE_DIR/bin/python3.12"
+              mkdir -p "$BUNDLE_DIR/lib"
+              ln -sf "$PYTHON_INSTALLED/lib/libpython3.12.dylib" "$BUNDLE_DIR/lib/libpython3.12.dylib" 2>/dev/null || true
+            fi
+
+            echo "Bundle contents:"
+            ls "$BUNDLE_DIR/"
           else
-            echo "Python already bundled, skipping install"
+            echo "Python already bundled, skipping."
           fi
 
-          echo "Installing openpyxl into bundled Python..."
-          "$FRAMEWORK_DST/Versions/3.12/bin/python3" -m pip install openpyxl --quiet
-          echo "Done. Bundle Python version:"
-          "$FRAMEWORK_DST/Versions/3.12/bin/python3" --version
+          echo "Installing openpyxl..."
+          "$BUNDLE_DIR/bin/python3.12" -m pip install openpyxl --quiet
+          echo "Done. Python version:"
+          "$BUNDLE_DIR/bin/python3.12" --version
 
       - name: Install Node deps
         run: npm ci
