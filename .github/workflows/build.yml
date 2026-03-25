@@ -18,36 +18,41 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Bundle Python 3.12 for macOS (Homebrew + relocatable copy)
+      - name: Bundle Python 3.12 for macOS (Homebrew relocatable copy)
         run: |
           BUNDLE_DIR="python/bundle"
           if [ ! -f "$BUNDLE_DIR/bin/python3.12" ]; then
             echo "Installing Python 3.12 via Homebrew..."
             brew install python@3.12
 
-            # 复制整个 Cellar python@3.12 目录（包含所有动态库和依赖）
-            PYTHON_VERSION=$(brew --cellar python@3.12)
-            echo "Python at: $PYTHON_VERSION"
+            PYTHON_CELLAR=$(brew --cellar python@3.12)
+            echo "Python Cellar at: $PYTHON_CELLAR"
+            echo "Cellar contents:"
+            ls "$PYTHON_CELLAR/"
+
             mkdir -p "$BUNDLE_DIR"
-            echo "Copying Python installation (this may take a minute)..."
-            cp -R "$PYTHON_VERSION" "$BUNDLE_DIR/Cellar_python" 2>/dev/null || true
+            echo "Copying Cellar..."
+            cp -R "$PYTHON_CELLAR" "$BUNDLE_DIR/Cellar_python"
+            echo "After copy:"
+            ls "$BUNDLE_DIR/Cellar_python/"
+            ls "$BUNDLE_DIR/Cellar_python/python@3.12/"
 
-            # 复制 Homebrew Cellar 的 tcl-tk（tkinter 需要）
-            if [ -d "$(brew --cellar)/tcl-tk" ]; then
-              cp -R "$(brew --cellar)/tcl-tk" "$BUNDLE_DIR/Cellar_tcl-tk" 2>/dev/null || true
-            fi
+            # 找到版本目录（如 3.12.12_2）
+            PYTHON_VERSION_DIR=$(ls "$BUNDLE_DIR/Cellar_python/python@3.12/" | grep -E '^[0-9]' | head -1)
+            echo "Version dir: $PYTHON_VERSION_DIR"
+            PYTHON_INSTALLED="$BUNDLE_DIR/Cellar_python/python@3.12/$PYTHON_VERSION_DIR"
+            echo "Python installed at: $PYTHON_INSTALLED"
+            echo "Bin contents:"
+            ls "$PYTHON_INSTALLED/bin/" | grep python || echo "NO BIN DIRECTORY"
 
-            # 建立 python3.12 符号链接
-            PYTHON_INSTALLED=$(ls -d $BUNDLE_DIR/Cellar_python/python@3.12/*/ 2>/dev/null | head -1)
-            if [ -n "$PYTHON_INSTALLED" ]; then
-              mkdir -p "$BUNDLE_DIR/bin"
-              ln -sf "$PYTHON_INSTALLED/bin/python3.12" "$BUNDLE_DIR/bin/python3.12"
-              mkdir -p "$BUNDLE_DIR/lib"
-              ln -sf "$PYTHON_INSTALLED/lib/libpython3.12.dylib" "$BUNDLE_DIR/lib/libpython3.12.dylib" 2>/dev/null || true
-            fi
+            mkdir -p "$BUNDLE_DIR/bin"
+            ln -sf "$PYTHON_INSTALLED/bin/python3.12" "$BUNDLE_DIR/bin/python3.12"
+            ln -sf "$PYTHON_INSTALLED/bin/pip3" "$BUNDLE_DIR/bin/pip3" 2>/dev/null || true
 
             echo "Bundle contents:"
             ls "$BUNDLE_DIR/"
+            echo "Symlink check:"
+            ls -la "$BUNDLE_DIR/bin/"
           else
             echo "Python already bundled, skipping."
           fi
