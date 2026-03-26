@@ -78,6 +78,45 @@ except Exception:
     pass
 
 
+# ─── OS 版本检测（Win10 vs Win11 延迟系数）────────────────
+def _get_os_timing() -> dict:
+    """
+    检测 Windows 版本，返回各阶段的延迟配置。
+    Win11 build >= 22000，消息循环更快，用较短延迟。
+    Win10 build < 22000，自绘控件 + 消息队列积压，需要保守延迟。
+    """
+    try:
+        import platform as _plat
+        build = int(_plat.version().split(".")[-1])
+    except Exception:
+        build = 0
+
+    if build >= 22000:
+        # Win11：标准 UIA 控件响应快
+        return {
+            "is_win11": True,
+            "focus_delay": 0.25,        # set_focus 后等待
+            "search_key_delay": 0.25,   # ^f / ^k 后等待
+            "search_result_timeout": 2.0,
+            "chat_ready_timeout": 2.0,
+            "esc_delay": 0.1,
+            "input_retry_base": 0.1,
+        }
+    else:
+        # Win10：自绘控件，消息队列慢，全部×1.6
+        return {
+            "is_win11": False,
+            "focus_delay": 0.4,
+            "search_key_delay": 0.4,
+            "search_result_timeout": 4.0,
+            "chat_ready_timeout": 3.5,
+            "esc_delay": 0.2,
+            "input_retry_base": 0.15,
+        }
+
+_OS_TIMING = _get_os_timing()
+
+
 # ─── 剪贴板工具 ────────────────────────────────────────
 def _clipboard_copy(text: str):
     """写入文本到剪贴板（仅在需要粘贴图片时使用）"""
@@ -301,48 +340,81 @@ def _focus_search_edit(main_win):
     return False
 
 
-def focus_search_and_open_chat(main_win, friend_name: str, delay: float = 0.35):
-    """聚焦全局搜索框，输入好友名，回车打开聊天（Win10 自适应等待版）"""
+def _click_search_area(main_win):
+    """点击微信左侧搜索框区域（坐标法，Win10/Win11 通用）。
+    微信搜索框固定在窗口左上角，约 (窗口左+180, 窗口上+50) 位置。
+    先尝试 UIA 控件聚焦，失败则降级到坐标点击。
+    """
+    # 优先：UIA 控件聚焦
+    if _focus_search_edit(main_win):
+        return True
+
+    # 降级：坐标点击（Win10 自绘控件无 UIA 节点时）
+    try:
+        rect = main_win.element_info.rectangle
+        # 搜索框在左侧面板顶部，x=左边缘+175（跳过导航栏），y=顶部+48
+        cx = rect.left + 175
+        cy = rect.top + 48
+        _log(f"[INFO] 坐标点击搜索框区域 ({cx}, {cy})")
+        mouse.click(button="left", coords=(cx, cy))
+        time.sleep(0.15)
+        return True
+    except Exception as e:
+        _log(f"[WARN] 坐标点击失败: {e}")
+        return False
+
+
+def focus_search_and_open_chat(main_win, friend_name: str):
+    """聚焦全局搜索框，输入好友名，回车打开聊天。
+    OS 感知版：Win10/Win11 使用不同延迟参数。
+    """
+    t = _OS_TIMING
     main_win.set_focus()
-    time.sleep(0.3)
+    time.sleep(t["focus_delay"])
 
-    # 先按 ESC 退出当前聊天页（如果在聊天界面，^f 会打开聊天内搜索而非全局搜索）
-    # 连按两次确保退出各种模态
-    keyboard.send_keys("{ESC}")
-    time.sleep(0.15)
-    keyboard.send_keys("{ESC}")
-    time.sleep(0.2)
+    # ── 退出当前聊天状态，回到主界面 ──
+    # ESC 在 Win10 有时无效，改用点击左侧会话列表区域（比 ESC 可靠）
+    try:
+        rect = main_win.element_info.rectangle
+        # 点击左侧会话列表区（x=窗口左+80，y=窗口高1/3处）
+        lx = rect.left + 80
+        ly = rect.top + int((rect.bottom - rect.top) / 3)
+        _log(f"[INFO] 点击会话列表区退出聊天 ({lx}, {ly})")
+        mouse.click(button="left", coords=(lx, ly))
+        time.sleep(t["esc_delay"])
+    except Exception:
+        # 兜底仍用 ESC
+        keyboard.send_keys("{ESC}")
+        time.sleep(t["esc_delay"])
+        keyboard.send_keys("{ESC}")
+        time.sleep(t["esc_delay"])
 
-    # 尝试快捷键聚焦搜索框
-    for combo in ("^f", "^k"):
-        _log(f"[INFO] 发送 {combo} 聚焦搜索框")
-        keyboard.send_keys(combo)
-        time.sleep(delay)
-        keyboard.send_keys("^a{BACKSPACE}")
-        time.sleep(delay)
-        if _focus_search_edit(main_win):
-            break
+    # ── 聚焦搜索框：坐标点击 + 快捷键双保险 ──
+    _log("[INFO] 聚焦搜索框（坐标点击）")
+    _click_search_area(main_win)
+    time.sleep(t["search_key_delay"])
 
-    # 如果快捷键没效果，尝试直接聚焦 Edit 控件
+    # 尝试快捷键兜底（Win11 上更可靠）
     if not _focus_search_edit(main_win):
-        _log("[WARN] 快捷键未能聚焦搜索框，直接输入")
+        keyboard.send_keys("^f")
+        time.sleep(t["search_key_delay"])
 
     # 清空搜索框
     keyboard.send_keys("^a{BACKSPACE}")
     time.sleep(0.15)
 
-    # 输入搜索词（SendMessage WM_SETTEXT，不走剪贴板）
+    # ── 输入搜索词 ──
     _log(f"[INFO] 输入搜索词：{friend_name}")
     keyboard.send_keys(friend_name, with_spaces=True)
 
-    # 自适应等待搜索结果出现（Win10 老机型响应慢，最多等 3 秒）
-    _wait_for_search_result(main_win, friend_name, timeout=3.0)
+    # ── 等待搜索结果稳定 ──
+    _wait_for_search_result(main_win, friend_name, timeout=t["search_result_timeout"])
 
     _log("[INFO] 回车打开聊天")
     keyboard.send_keys("{ENTER}")
 
-    # 等待聊天窗口切换完成（自适应，Win10 最多等 2.5 秒）
-    _wait_for_chat_ready(main_win, timeout=2.5)
+    # ── 等待聊天窗口就绪 ──
+    _wait_for_chat_ready(main_win, timeout=t["chat_ready_timeout"])
 
 
 def _wait_for_search_result(main_win, friend_name: str, timeout: float = 3.0):
@@ -381,30 +453,50 @@ def _wait_for_search_result(main_win, friend_name: str, timeout: float = 3.0):
 
 
 def _wait_for_chat_ready(main_win, timeout: float = 2.5):
-    """自适应等待聊天窗口就绪（输入框可用），超时则用固定等待兜底"""
+    """自适应等待聊天输入框就绪。
+    策略：找所有 Edit/Document/RichEdit 控件，取面积最大的那个。
+    面积最大的才是聊天输入框（搜索框面积小得多）。
+    Win10 上 threshold 降低到 5000 避免漏判。
+    """
     _log(f"[INFO] 等待聊天窗口就绪（最多 {timeout}s）")
+    # Win10 聊天输入框面积阈值更小（窗口可能不是最大化）
+    area_threshold = 5000 if not _OS_TIMING["is_win11"] else 10000
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             ctrls = main_win.descendants()
+            candidates = []
             for c in ctrls:
                 try:
                     ei = c.element_info
                     ct = getattr(ei, "control_type", "") or ""
                     cn = getattr(ei, "class_name", "") or ""
-                    if ct in ("Edit", "Document") or "RichEdit" in cn:
-                        rect = getattr(ei, "rectangle", None)
-                        if rect and _window_area(rect) > 10000:
-                            _log("[INFO] 聊天输入框已就绪")
-                            time.sleep(0.15)
-                            return
+                    if ct not in ("Edit", "Document") and "RichEdit" not in cn:
+                        continue
+                    rect = getattr(ei, "rectangle", None)
+                    if rect:
+                        area = _window_area(rect)
+                        if area > area_threshold:
+                            candidates.append((area, c))
                 except Exception:
                     continue
+
+            if candidates:
+                # 取面积最大的，排除搜索框（搜索框通常 < 20000）
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                largest_area = candidates[0][0]
+                _log(f"[INFO] 最大输入控件面积={largest_area}，等待阈值={area_threshold}")
+                if largest_area > area_threshold * 3:  # 聊天框 >> 搜索框
+                    _log("[INFO] 聊天输入框已就绪")
+                    time.sleep(0.15)
+                    return
         except Exception:
             pass
         time.sleep(0.1)
+
     _log("[WARN] 等待超时，使用固定延迟兜底")
-    time.sleep(0.5)
+    time.sleep(0.5 if not _OS_TIMING["is_win11"] else 0.3)
 
 
 def _focus_message_input(main_win):
@@ -479,9 +571,11 @@ def send_message_to_current_chat(main_win, message: str,
     """
     向当前聊天窗口输入消息并发送。
     use_paste=True 时用 Ctrl+V（走剪贴板），False 时直接打字。
-    推荐 False：pywinauto keyboard.send_keys 直接写文本到控件，完全不碰剪贴板。
-    Win10 兼容版：聚焦输入框最多重试 5 次，带自适应等待。
+    OS 感知版：Win10 重试间隔更长，Win11 更快。
     """
+    t = _OS_TIMING
+    retry_base = t["input_retry_base"]
+
     # 聚焦输入框（最多重试 5 次，兼容 Win10 慢机型）
     focused = False
     for attempt in range(5):
@@ -489,7 +583,7 @@ def send_message_to_current_chat(main_win, message: str,
             focused = True
             break
         _click_bottom_chat_area(main_win, clicks=2)
-        time.sleep(0.15 + attempt * 0.1)  # 逐步加大等待
+        time.sleep(retry_base + attempt * retry_base)  # 逐步加大等待，Win10 更保守
     if not focused:
         _log("[WARN] 未能聚焦输入框，继续尝试发送")
 
@@ -500,7 +594,6 @@ def send_message_to_current_chat(main_win, message: str,
     # 输入消息：优先直接打字（不走剪贴板，无防抖问题）
     _log(f"[INFO] 输入消息：{message[:20]}{'...' if len(message) > 20 else ''}")
     if use_paste:
-        # 备选：剪贴板粘贴
         _clipboard_copy(message)
         time.sleep(0.08)
         keyboard.send_keys("^v")
