@@ -14,7 +14,7 @@ on run argv
 	on error
 		tell application id "com.tencent.xinWeChat" to activate
 	end try
-	delay 0.8
+	delay (0.6 + (random number from 0.0 to 0.4))
 
 	-- 查找微信进程名称
 	set pName to ""
@@ -35,31 +35,31 @@ on run argv
 	tell application "System Events"
 		tell process pName
 			set frontmost to true
-			delay 0.3
+			delay (0.2 + (random number from 0.0 to 0.2))
 
 			keystroke "f" using {command down}
-			delay 0.25
+			delay (0.2 + (random number from 0.0 to 0.15))
 
 			set the clipboard to targetName
 			keystroke "v" using {command down}
-			delay 0.25
+			delay (0.2 + (random number from 0.0 to 0.15))
 
 			key code 36 -- 回车进入会话
-			delay 0.7
+			delay (0.5 + (random number from 0.0 to 0.4))
 
 			-- 关闭可能的搜索残留浮层
 			key code 53
-			delay 0.15
+			delay (0.1 + (random number from 0.0 to 0.1))
 
 			-- 文字发送
 			if msgType is "文字" or msgType is "文字+图片" then
 				if msgText is not "" then
 					set the clipboard to msgText
-					delay 0.05
+					delay (0.03 + (random number from 0.0 to 0.05))
 					keystroke "v" using {command down}
-					delay 0.15
+					delay (0.1 + (random number from 0.0 to 0.1))
 					key code 36
-					delay 0.35
+					delay (0.25 + (random number from 0.0 to 0.2))
 				else
 					set sendSucceeded to false
 				end if
@@ -71,11 +71,11 @@ on run argv
 					try
 						set imgAlias to (POSIX file imagePath) as alias
 						set the clipboard to imgAlias
-						delay 0.15
+						delay (0.1 + (random number from 0.0 to 0.1))
 						keystroke "v" using {command down}
-						delay 0.25
+						delay (0.2 + (random number from 0.0 to 0.15))
 						key code 36
-						delay 0.4
+						delay (0.3 + (random number from 0.0 to 0.2))
 					on error errMsg
 						set sendSucceeded to false
 						error "图片发送失败: " & errMsg

@@ -33,7 +33,7 @@ async function parseExcel(file) {
   ]
 }
 
-const STORAGE_KEY = 'wechat_sender_tasks'
+const STORAGE_KEY = 'wechatagi_tasks'
 
 function loadTasks() {
   try {
@@ -207,6 +207,21 @@ export default function TasksPage() {
     abortRef.current = false
     setShowLog(true)
     setLogs([])
+
+    // 发送前检测微信是否在线
+    if (window.api?.checkWechat) {
+      try {
+        const wechat = await window.api.checkWechat()
+        if (!wechat.alive) {
+          addLog(`⚠️ 微信未运行：${wechat.detail}`, 'error')
+          setSending(false)
+          alert(`微信未运行：${wechat.detail}\n请先启动并登录微信后再发送。`)
+          return
+        }
+        addLog('✓ 微信已在线')
+      } catch (_) {}
+    }
+
     addLog(`▶ 开始发送 ${targets.length} 条任务...`)
 
     if (window.api) {

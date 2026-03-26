@@ -12,7 +12,7 @@ export default function TitleBar() {
           <path d="M7 12.5C7 10 9 8.5 12 8.5C15 8.5 17 10 17 12.5C17 15 15 16.5 12 16.5C11.2 16.5 10.4 16.3 9.8 16L7.5 17L8 14.8C7.3 14.1 7 13.3 7 12.5Z" fill="white"/>
         </svg>
       </div>
-      <span className="titlebar-title">微信发送助手</span>
+      <span className="titlebar-title">WechatAGI</span>
     </div>
   )
 }

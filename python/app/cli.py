@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-微信批量发送助手 - CLI 工具（macOS / Windows）
+WechatAGI — 微信智能发送助手 CLI（macOS / Windows）
 GUI 增强版：支持 --json 输出
 """
 from __future__ import annotations
@@ -52,7 +52,7 @@ IS_WINDOWS = platform.system() == "Windows"
 # 脚本自身所在目录（兼容 dev 和打包后路径）
 _SELF_DIR   = Path(__file__).resolve().parents[0]          # .../python/app/
 _SCRIPTS_DIR = _SELF_DIR.parent / "scripts"                  # .../python/scripts/
-CFG_PATH   = _real_home() / ".wechat-sender" / "config.json"
+CFG_PATH   = _real_home() / ".wechatagi" / "config.json"
 APPLE_SCRIPT = _SCRIPTS_DIR / "wechat_send_mac.applescript"
 SHEET_TASKS = "发送任务"
 HEADER_ROW = 2
@@ -114,6 +114,13 @@ def get_cfg():
         "dry_run": False,
         "send_interval": 5,
         "max_per_minute": 8,
+        # 高级配置
+        "silent_mode": False,
+        "jitter_delay_factor": 0.3,
+        "clipboard_verify_retries": 3,
+        # API 服务
+        "api_port": 9528,
+        "api_token": "",
     }
     for k, v in defaults.items():
         cfg.setdefault(k, v)
@@ -169,8 +176,10 @@ def validate_task(task: Task):
     if task.msg_type in {"图片", "文字+图片"}:
         if not task.image_path:
             raise ValueError("图片消息缺少图片路径")
-        if not Path(task.image_path).expanduser().exists():
-            raise ValueError(f"图片不存在: {task.image_path}")
+        # 允许 HTTP/HTTPS URL（会在 call_sender 中自动下载缓存）
+        if not task.image_path.strip().startswith(("http://", "https://")):
+            if not Path(task.image_path).expanduser().exists():
+                raise ValueError(f"图片不存在: {task.image_path}")
 
 
 def should_send(task: Task, now: datetime) -> bool:
@@ -213,6 +222,13 @@ def _get_win_mod():
 
 
 def call_sender(target: str, msg_type: str, text: str, image_path: str):
+    # 图片 URL 自动下载 + MD5 缓存
+    if image_path and image_path.strip().startswith(("http://", "https://")):
+        import importlib.util as _ilu
+        _ic_spec = _ilu.spec_from_file_location("image_cache", str(_SELF_DIR / "image_cache.py"))
+        _ic_mod = _ilu.module_from_spec(_ic_spec)
+        _ic_spec.loader.exec_module(_ic_mod)
+        image_path = _ic_mod.resolve_image(image_path)
     img = str(Path(image_path).expanduser()) if image_path else ""
     if IS_MAC:
         _ensure_accessibility()
@@ -227,6 +243,11 @@ def call_sender(target: str, msg_type: str, text: str, image_path: str):
     elif IS_WINDOWS:
         # 进程内直接调用（不再 spawn 子进程），整批任务复用模块，避免每条都重新附着微信
         mod = _get_win_mod()
+        # 将用户配置覆盖到 OS_TIMING
+        cfg = get_cfg()
+        mod._OS_TIMING["silent_mode"] = cfg.get("silent_mode", False)
+        mod._OS_TIMING["jitter_delay_factor"] = cfg.get("jitter_delay_factor", 0.3)
+        mod._OS_TIMING["clipboard_verify_retries"] = cfg.get("clipboard_verify_retries", 3)
         mod.call_send(target, msg_type, text or "", img)
     else:
         raise RuntimeError("当前系统不支持微信自动化（仅支持 macOS 和 Windows）")
@@ -634,8 +655,57 @@ def cmd_template(_):
         print(f"  {k}: {v}")
 
 
+def cmd_check_wechat(_):
+    # 动态导入 monitor 模块（兼容脚本直接运行和包导入两种场景）
+    import importlib.util
+    monitor_path = _SELF_DIR / "monitor.py"
+    spec = importlib.util.spec_from_file_location("monitor", str(monitor_path))
+    monitor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(monitor)
+    result = monitor.check_wechat_alive()
+    print(json.dumps(result, ensure_ascii=False))
+
+
+def cmd_send_one(args):
+    """同步单发一条消息，exit code 0=成功 1=失败。"""
+    if not IS_MAC and not IS_WINDOWS:
+        print("❌ 当前系统不支持微信自动化")
+        sys.exit(1)
+    try:
+        task = Task(
+            row=0, app="微信", target=args.target, msg_type=args.msg_type,
+            text=args.text, image_path=args.image_path,
+            send_time=None, repeat="", status="",
+        )
+        validate_task(task)
+        call_sender(args.target, args.msg_type, args.text, args.image_path)
+        print(json.dumps({"ok": True, "target": args.target}, ensure_ascii=False))
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        sys.exit(1)
+
+
+def cmd_api(args):
+    """启动 Flask HTTP API 服务。"""
+    import importlib.util as _ilu
+    _api_spec = _ilu.spec_from_file_location("api_server", str(_SELF_DIR / "api_server.py"))
+    _api_mod = _ilu.module_from_spec(_api_spec)
+    _api_spec.loader.exec_module(_api_mod)
+
+    cfg = get_cfg()
+    port = args.port or cfg.get("api_port", 9528)
+    token = cfg.get("api_token", "")
+    app = _api_mod.create_app(api_token=token, cfg=cfg)
+    print(f"WechatAGI API 服务启动 | http://{args.host}:{port}")
+    if token:
+        print(f"Token 认证已启用")
+    else:
+        print(f"⚠️  未设置 api_token，API 无认证保护")
+    app.run(host=args.host, port=port, debug=False)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="微信批量发送助手 CLI (macOS / Windows)")
+    parser = argparse.ArgumentParser(description="WechatAGI CLI (macOS / Windows)")
     sub = parser.add_subparsers(dest="cmd")
 
     p_config = sub.add_parser("config", help="查看 / 修改配置")
@@ -654,6 +724,19 @@ def main():
     p_send.set_defaults(func=cmd_send)
     sub.add_parser("daemon", help="守护进程模式").set_defaults(func=cmd_daemon)
     sub.add_parser("template", help="查看表格模板").set_defaults(func=cmd_template)
+    sub.add_parser("check-wechat", help="检测微信是否在线（JSON 输出）").set_defaults(func=cmd_check_wechat)
+
+    p_send_one = sub.add_parser("send-one", help="同步单发一条消息（给 LLM Agent 用）")
+    p_send_one.add_argument("--target", required=True, help="发送目标")
+    p_send_one.add_argument("--msg-type", default="文字", help="消息类型")
+    p_send_one.add_argument("--text", default="", help="文字内容")
+    p_send_one.add_argument("--image-path", default="", help="图片路径或 URL")
+    p_send_one.set_defaults(func=cmd_send_one)
+
+    p_api = sub.add_parser("api", help="启动 HTTP API 服务")
+    p_api.add_argument("--port", type=int, default=None, help="监听端口（默认读取配置）")
+    p_api.add_argument("--host", default="127.0.0.1", help="监听地址")
+    p_api.set_defaults(func=cmd_api)
 
     args = parser.parse_args()
 

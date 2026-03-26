@@ -100,8 +100,8 @@ function checkAutomationPermission() {
     dialog.showMessageBox(win, {
       type: 'warning',
       title: '需要辅助功能权限',
-      message: '微信发送助手需要「辅助功能」权限才能自动发送微信消息。',
-      detail: '点击「打开系统设置」后，在「辅助功能」列表中找到「微信发送助手」并勾选启用。',
+      message: 'WechatAGI 需要「辅助功能」权限才能自动发送微信消息。',
+      detail: '点击「打开系统设置」后，在「辅助功能」列表中找到「WechatAGI」并勾选启用。',
       buttons: ['打开系统设置', '稍后'],
       defaultId: 0,
       cancelId: 1,
@@ -115,6 +115,7 @@ function checkAutomationPermission() {
 
 // ─── 主进程 ───────────────────────────────────────────────────────────
 let daemonProcess = null
+let apiProcess = null
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -137,7 +138,7 @@ function createWindow() {
 
 ipcMain.handle('get-config', async () => {
   try {
-    const p = path.join(os.homedir(), '.wechat-sender', 'config.json')
+    const p = path.join(os.homedir(), '.wechatagi', 'config.json')
     if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'))
   } catch (_) {}
   return { send_interval: 5, max_per_minute: 8, poll_seconds: 15, dry_run: false }
@@ -145,7 +146,7 @@ ipcMain.handle('get-config', async () => {
 
 ipcMain.handle('save-config', async (_, cfg) => {
   try {
-    const dir = path.join(os.homedir(), '.wechat-sender')
+    const dir = path.join(os.homedir(), '.wechatagi')
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(cfg, null, 2), 'utf8')
     return { ok: true }
@@ -280,7 +281,7 @@ ipcMain.handle('send-selected', async (event, taskData) => {
 
 ipcMain.handle('stop-send', async () => {
   try {
-    fs.writeFileSync(path.join(os.homedir(), '.wechat-sender', 'stop_signal'), String(Date.now()))
+    fs.writeFileSync(path.join(os.homedir(), '.wechatagi', 'stop_signal'), String(Date.now()))
   } catch (_) {}
   return { ok: true }
 })
@@ -313,7 +314,7 @@ ipcMain.handle('daemon-stop', async () => {
 ipcMain.handle('daemon-status', async () => ({ running: daemonProcess !== null }))
 
 ipcMain.handle('add-schedule', async (_, schedule) => {
-  const f = path.join(os.homedir(), '.wechat-sender', 'schedules.json')
+  const f = path.join(os.homedir(), '.wechatagi', 'schedules.json')
   let arr = []
   try { arr = JSON.parse(fs.readFileSync(f, 'utf8')) } catch (_) {}
   arr.push(schedule)
@@ -322,7 +323,7 @@ ipcMain.handle('add-schedule', async (_, schedule) => {
 })
 
 ipcMain.handle('remove-schedule', async (_, id) => {
-  const f = path.join(os.homedir(), '.wechat-sender', 'schedules.json')
+  const f = path.join(os.homedir(), '.wechatagi', 'schedules.json')
   let arr = []
   try { arr = JSON.parse(fs.readFileSync(f, 'utf8')) } catch (_) {}
   arr = arr.filter(function(s) { return s.id !== id })
@@ -336,7 +337,7 @@ ipcMain.handle('remove-schedule', async (_, id) => {
 // ── GUI 任务同步：写任务列表到 gui_tasks.json（daemon 会读取）─────────────
 ipcMain.handle('save-gui-tasks', async (_, taskList) => {
   try {
-    const dir = path.join(os.homedir(), '.wechat-sender')
+    const dir = path.join(os.homedir(), '.wechatagi')
     fs.mkdirSync(dir, { recursive: true })
     const f = path.join(dir, 'gui_tasks.json')
     fs.writeFileSync(f, JSON.stringify(taskList, null, 2), 'utf8')
@@ -348,7 +349,7 @@ ipcMain.handle('save-gui-tasks', async (_, taskList) => {
 
 ipcMain.handle('load-gui-tasks', async () => {
   try {
-    const f = path.join(os.homedir(), '.wechat-sender', 'gui_tasks.json')
+    const f = path.join(os.homedir(), '.wechatagi', 'gui_tasks.json')
     if (fs.existsSync(f)) {
       return JSON.parse(fs.readFileSync(f, 'utf8'))
     }
@@ -371,8 +372,64 @@ ipcMain.handle('open-file', async (_, filePath) => {
 
 ipcMain.handle('get-platform', () => process.platform)
 
+ipcMain.handle('check-wechat', async () => {
+  try {
+    const r = spawnSync(getPythonPath(), [getScriptPath('app/cli.py'), 'check-wechat'], {
+      encoding: 'utf8', timeout: 10000,
+      env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' }),
+    })
+    if (r.status === 0) {
+      try { return JSON.parse(r.stdout) } catch (_) {}
+    }
+    return { alive: false, detail: r.stderr || '检测失败' }
+  } catch (e) {
+    return { alive: false, detail: e.message }
+  }
+})
+
+// ─── API 服务管理 ─────────────────────────────────────────────────────
+ipcMain.handle('api-start', async (event, opts) => {
+  if (apiProcess) return { ok: false, error: 'API 服务已在运行' }
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const port = (opts && opts.port) || 9528
+  apiProcess = spawn(getPythonPath(), [getScriptPath('app/cli.py'), 'api', '--port', String(port)], {
+    env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }),
+    windowsHide: true,
+  })
+  apiProcess.stdout.on('data', function(d) {
+    if (!win.isDestroyed()) win.webContents.send('api-log', d.toString('utf8'))
+  })
+  apiProcess.stderr.on('data', function(d) {
+    if (!win.isDestroyed()) win.webContents.send('api-log', '[ERR] ' + d.toString('utf8'))
+  })
+  apiProcess.on('close', function() {
+    apiProcess = null
+    if (!win.isDestroyed()) win.webContents.send('api-stopped')
+  })
+  return { ok: true }
+})
+
+ipcMain.handle('api-stop', async () => {
+  if (apiProcess) { apiProcess.kill(); apiProcess = null }
+  return { ok: true }
+})
+
+ipcMain.handle('api-status', async () => ({ running: apiProcess !== null }))
+
 // ─── App lifecycle ────────────────────────────────────────────────────
 app.whenReady().then(function() {
+  // 数据迁移：从旧 .wechat-sender 目录复制到新 .wechatagi 目录
+  const oldDir = path.join(os.homedir(), '.wechat-sender')
+  const newDir = path.join(os.homedir(), '.wechatagi')
+  if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+    try {
+      fs.cpSync(oldDir, newDir, { recursive: true })
+      console.log('[migration] Copied .wechat-sender → .wechatagi')
+    } catch (e) {
+      console.warn('[migration] Failed to copy old config:', e.message)
+    }
+  }
+
   ensurePythonDeps()
   createWindow()
   // 首次启动检测 Automation 权限（macOS）
@@ -384,9 +441,11 @@ app.whenReady().then(function() {
 
 app.on('window-all-closed', function() {
   if (daemonProcess) daemonProcess.kill()
+  if (apiProcess) apiProcess.kill()
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', function() {
   if (daemonProcess) daemonProcess.kill()
+  if (apiProcess) apiProcess.kill()
 })

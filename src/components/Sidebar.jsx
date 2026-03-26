@@ -39,7 +39,7 @@ export default function Sidebar({ current, onNavigate }) {
           <circle cx="16" cy="16" r="14" fill="#07C160"/>
           <path d="M9 16.5C9 13.5 11.5 11.5 16 11.5C20.5 11.5 23 13.5 23 16.5C23 19.5 20.5 21.5 16 21.5C14.8 21.5 13.6 21.2 12.7 20.7L9.5 22L10 18.5C9.4 17.7 9 17.1 9 16.5Z" fill="white"/>
         </svg>
-        <span className="sidebar-logo-text">发送助手</span>
+        <span className="sidebar-logo-text">WechatAGI</span>
       </div>
 
       <ul className="sidebar-nav">
@@ -58,7 +58,7 @@ export default function Sidebar({ current, onNavigate }) {
       </ul>
 
       <div className="sidebar-footer">
-        <span className="sidebar-version">v1.1.1</span>
+        <span className="sidebar-version">v2.0.0</span>
       </div>
     </nav>
   )

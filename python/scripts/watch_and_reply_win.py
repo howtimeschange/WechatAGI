@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-微信批量发送助手 — Windows 自动回复监控
+WechatAGI — Windows 自动回复监控
 依赖: pip install uiautomation pyperclip pywin32 Pillow
 用法: python scripts/watch_and_reply_win.py --contact 文件传输助手 --poll 2 --dry
 """

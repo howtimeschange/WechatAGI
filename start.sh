@@ -1,9 +1,9 @@
 #!/bin/bash
-# Wechat Sender GUI — 构建并运行脚本（macOS / Windows）
+# WechatAGI — 构建并运行脚本（macOS / Windows）
 
 set -e
 
-echo "=== 微信发送助手 — 开始构建 ==="
+echo "=== WechatAGI — 开始构建 ==="
 
 # 检测平台
 PLATFORM="$(uname -s)"

@@ -44,7 +44,7 @@ module.exports = function afterPack(context) {
   // 目标目录：Resources/python/lib/<version>/site-packages/
   const destLib = path.join(
     appOutDir,
-    'WechatSender.app',
+    'WechatAGI.app',
     'Contents',
     'Resources',
     'python',

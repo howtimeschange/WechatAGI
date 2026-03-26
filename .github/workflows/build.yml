@@ -37,7 +37,7 @@ jobs:
           echo "Python bin:"
           ls "$DEST/bin/"
           echo "Installing openpyxl..."
-          "$DEST/bin/pip3" install openpyxl --quiet
+          "$DEST/bin/pip3" install openpyxl flask --quiet
           echo "Done. Python version:"
           "$DEST/bin/python3" --version
 
@@ -82,7 +82,7 @@ jobs:
           Write-Host "Python:"
           Get-ChildItem "$dest" -Name
           Write-Host "Installing dependencies..."
-          & "$dest\python.exe" -m pip install openpyxl pywinauto psutil pyperclip pywin32 Pillow --quiet --no-warn-script-location
+          & "$dest\python.exe" -m pip install openpyxl pywinauto psutil pyperclip pywin32 Pillow flask --quiet --no-warn-script-location
           Write-Host "Done. Python version:"
           & "$dest\python.exe" --version
 

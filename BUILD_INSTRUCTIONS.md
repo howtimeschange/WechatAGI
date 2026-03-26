@@ -3,7 +3,7 @@
 ## 快速启动
 
 ```bash
-cd wechat-sender-gui
+cd wechatagi
 
 # macOS
 chmod +x start.sh && ./start.sh

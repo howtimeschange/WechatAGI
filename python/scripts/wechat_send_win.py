@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-微信批量发送助手 — Windows 版（pywinauto 方案）
+WechatAGI — Windows 版自动发送（pywinauto 方案）
 依赖: pip install pywinauto psutil pyperclip Pillow openpyxl PyYAML rich
 核心优势：keyboard.send_keys() 用 SendMessage WM_SETTEXT 直接写文本到控件，
          不走剪贴板，不触发 WeChat 剪贴板监控，无防抖问题。
@@ -9,8 +9,10 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
+import random
 import subprocess
 import sys
 import time
@@ -101,6 +103,12 @@ def _get_os_timing() -> dict:
             "chat_ready_timeout": 2.0,
             "esc_delay": 0.1,
             "input_retry_base": 0.1,
+            "clipboard_verify_retries": 3,
+            "clipboard_verify_delay": 0.05,
+            "jitter_edge_offset": 5,
+            "jitter_delay_factor": 0.3,
+            "hotkey_wake_delay": 1.5,
+            "silent_mode": False,
         }
     else:
         # Win10：自绘控件，消息队列慢，全部×1.6
@@ -112,20 +120,38 @@ def _get_os_timing() -> dict:
             "chat_ready_timeout": 3.5,
             "esc_delay": 0.2,
             "input_retry_base": 0.15,
+            "clipboard_verify_retries": 3,
+            "clipboard_verify_delay": 0.05,
+            "jitter_edge_offset": 5,
+            "jitter_delay_factor": 0.3,
+            "hotkey_wake_delay": 1.5,
+            "silent_mode": False,
         }
 
 _OS_TIMING = _get_os_timing()
 
 
 # ─── 剪贴板工具 ────────────────────────────────────────
-def _clipboard_copy(text: str):
-    """写入文本到剪贴板（仅在需要粘贴图片时使用）"""
+def _clipboard_copy(text: str) -> bool:
+    """写入文本到剪贴板，写入后读回验证，最多重试 N 次。返回是否成功。"""
     if not text:
-        return
-    try:
-        _pyperclip.copy(text)
-    except Exception as e:
-        print(f"[WARN] 剪贴板写入失败: {e}", file=sys.stderr)
+        return True
+    retries = _OS_TIMING.get("clipboard_verify_retries", 3)
+    delay = _OS_TIMING.get("clipboard_verify_delay", 0.05)
+    for attempt in range(retries):
+        try:
+            _pyperclip.copy(text)
+            time.sleep(delay)
+            readback = _pyperclip.paste()
+            if readback == text:
+                return True
+            _log(f"[WARN] 剪贴板验证失败 (attempt {attempt + 1}): "
+                 f"wrote {len(text)} chars, read {len(readback)} chars")
+        except Exception as e:
+            _log(f"[WARN] 剪贴板写入失败 (attempt {attempt + 1}): {e}")
+        time.sleep(delay)
+    print(f"[WARN] 剪贴板写入验证失败，已重试 {retries} 次", file=sys.stderr)
+    return False
 
 
 def _clipboard_clear():
@@ -133,6 +159,68 @@ def _clipboard_clear():
         _pyperclip.copy("")
     except Exception:
         pass
+
+
+# ─── send_keys 特殊字符转义 ────────────────────────────
+_SENDKEYS_SPECIAL = set("+^%~{}()")
+
+
+def _escape_send_keys(text: str) -> str:
+    """转义 send_keys 特殊字符，防止 +^%~ 等被当作控制键。
+    不修改控制序列（{ESC}, ^f, {ENTER} 等），仅用于用户输入文本。
+    """
+    parts = []
+    for ch in text:
+        if ch == "{":
+            parts.append("{{}")
+        elif ch == "}":
+            parts.append("{}}")
+        elif ch in _SENDKEYS_SPECIAL:
+            parts.append("{" + ch + "}")
+        else:
+            parts.append(ch)
+    return "".join(parts)
+
+
+# ─── 通用轮询工具 ─────────────────────────────────────
+def _wait_for(find_fn, timeout: float, interval: float = 0.08, desc: str = "") -> bool:
+    """通用轮询：反复调用 find_fn()，返回 True 表示条件满足，超时返回 False。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if find_fn():
+                return True
+        except Exception:
+            pass
+        time.sleep(interval)
+    if desc:
+        _log(f"[WARN] 等待超时: {desc}")
+    return False
+
+
+def _click_with_jitter(coords=None, rect=None, edge_offset=None):
+    """带随机偏移的点击，防检测。
+    rect 模式：在元素矩形内随机取点。
+    coords 模式：在中心点附近随机偏移。
+    """
+    if edge_offset is None:
+        edge_offset = _OS_TIMING.get("jitter_edge_offset", 5)
+
+    if rect is not None:
+        # rect 模式：矩形内随机点
+        x = random.randint(rect.left + edge_offset, max(rect.left + edge_offset, rect.right - edge_offset))
+        y = random.randint(rect.top + edge_offset, max(rect.top + edge_offset, rect.bottom - edge_offset))
+    elif coords is not None:
+        cx, cy = coords
+        x = cx + random.randint(-edge_offset, edge_offset)
+        y = cy + random.randint(-edge_offset, edge_offset)
+    else:
+        raise ValueError("_click_with_jitter: 需要 coords 或 rect 参数")
+
+    # 随机延迟 0-80ms
+    jitter_ms = random.randint(0, 80)
+    time.sleep(jitter_ms / 1000.0)
+    mouse.click(button="left", coords=(x, y))
 
 
 # ─── pywinauto 核心工具 ─────────────────────────────────
@@ -282,7 +370,13 @@ def attach_wechat(timeout: float = 20.0):
     ensure_wechat_running(start_if_needed=True, timeout=timeout)
     chosen = _find_wechat_window()
     if chosen is None:
-        raise RuntimeError("无法找到微信主窗口")
+        # 尝试 Ctrl+Alt+W 唤醒隐藏/托盘中的微信窗口
+        _log("[INFO] 窗口未找到，尝试 Ctrl+Alt+W 唤醒")
+        keyboard.send_keys("^%w")
+        time.sleep(_OS_TIMING.get("hotkey_wake_delay", 1.5))
+        chosen = _find_wechat_window()
+        if chosen is None:
+            raise RuntimeError("无法找到微信主窗口（已尝试 Ctrl+Alt+W 唤醒）")
 
     app = Application(backend=BACKEND)
     try:
@@ -322,7 +416,16 @@ def attach_wechat(timeout: float = 20.0):
     except Exception:
         pass
 
-    time.sleep(_OS_TIMING["focus_delay"])
+    # 轮询等待窗口变为 active，替代固定 sleep
+    def _is_active():
+        try:
+            return wrapper.is_active()
+        except Exception:
+            return False
+
+    if not _wait_for(_is_active, timeout=_OS_TIMING["focus_delay"] * 4,
+                     desc="attach_wechat: 窗口变为 active"):
+        time.sleep(_OS_TIMING["focus_delay"])  # 超时兜底
     return app, wrapper
 
 
@@ -362,12 +465,36 @@ def _click_search_area(main_win):
         cx = rect.left + 175
         cy = rect.top + 48
         _log(f"[INFO] 坐标点击搜索框区域 ({cx}, {cy})")
-        mouse.click(button="left", coords=(cx, cy))
+        _click_with_jitter(coords=(cx, cy))
         time.sleep(0.15)
         return True
     except Exception as e:
         _log(f"[WARN] 坐标点击失败: {e}")
         return False
+
+
+def _try_session_list_click(main_win, friend_name: str) -> bool:
+    """在当前会话列表中查找联系人，找到则直接点击打开聊天。
+    避免每次都走搜索流程，对频繁联系的人效率更高。
+    """
+    try:
+        items = main_win.descendants(control_type="ListItem")
+    except Exception:
+        return False
+
+    for item in items:
+        try:
+            name = (getattr(item.element_info, "name", "") or "").strip()
+            if name == friend_name:
+                rect = getattr(item.element_info, "rectangle", None)
+                if rect:
+                    _log(f"[INFO] 会话列表找到 '{friend_name}'，直接点击")
+                    _click_with_jitter(rect=rect)
+                    return True
+        except Exception:
+            continue
+    _log(f"[INFO] 会话列表未找到 '{friend_name}'，走搜索流程")
+    return False
 
 
 def focus_search_and_open_chat(main_win, friend_name: str):
@@ -376,7 +503,22 @@ def focus_search_and_open_chat(main_win, friend_name: str):
     """
     t = _OS_TIMING
     main_win.set_focus()
-    time.sleep(t["focus_delay"])
+
+    # 轮询等待窗口聚焦，替代固定 sleep
+    def _is_focused():
+        try:
+            return main_win.is_active()
+        except Exception:
+            return False
+
+    if not _wait_for(_is_focused, timeout=t["focus_delay"] * 4,
+                     desc="focus_search: 窗口聚焦"):
+        time.sleep(t["focus_delay"])  # 超时兜底
+
+    # ── 优先从会话列表直接点击（跳过搜索） ──
+    if _try_session_list_click(main_win, friend_name):
+        _wait_for_chat_ready(main_win, timeout=t["chat_ready_timeout"])
+        return
 
     # ── 退出当前聊天状态，回到主界面 ──
     # ESC 在 Win10 有时无效，改用点击左侧会话列表区域（比 ESC 可靠）
@@ -386,7 +528,7 @@ def focus_search_and_open_chat(main_win, friend_name: str):
         lx = rect.left + 80
         ly = rect.top + int((rect.bottom - rect.top) / 3)
         _log(f"[INFO] 点击会话列表区退出聊天 ({lx}, {ly})")
-        mouse.click(button="left", coords=(lx, ly))
+        _click_with_jitter(coords=(lx, ly))
         time.sleep(t["esc_delay"])
     except Exception:
         # 兜底仍用 ESC
@@ -411,7 +553,7 @@ def focus_search_and_open_chat(main_win, friend_name: str):
 
     # ── 输入搜索词 ──
     _log(f"[INFO] 输入搜索词：{friend_name}")
-    keyboard.send_keys(friend_name, with_spaces=True)
+    keyboard.send_keys(_escape_send_keys(friend_name), with_spaces=True)
 
     # ── 等待搜索结果稳定 ──
     _wait_for_search_result(main_win, friend_name, timeout=t["search_result_timeout"])
@@ -548,10 +690,8 @@ def _focus_message_input(main_win):
             ctrl.set_focus()
             return True
         except Exception:
-            # set_focus 失败，尝试点击控件中心
-            x = int((rect.left + rect.right) / 2)
-            y = int((rect.top + rect.bottom) / 2)
-            mouse.click(button="left", coords=(x, y))
+            # set_focus 失败，尝试点击控件中心（带抖动）
+            _click_with_jitter(rect=rect)
             return True
     return False
 
@@ -564,10 +704,82 @@ def _click_bottom_chat_area(main_win, clicks: int = 3):
         for i in range(clicks):
             y = int(rect.bottom - 80 - i * 40)
             _log(f"[DEBUG] 点击聊天底部区域 ({cx}, {y})")
-            mouse.click(button="left", coords=(cx, y))
+            _click_with_jitter(coords=(cx, y))
             time.sleep(0.1)
     except Exception as e:
         _log(f"[WARN] 点击聊天底部失败: {e}")
+
+
+def _get_input_hwnd(main_win):
+    """复用 _focus_message_input 的评分逻辑找到输入框控件，返回其 handle。"""
+    try:
+        ctrls = main_win.descendants()
+    except Exception:
+        return None
+
+    try:
+        rect_win = main_win.element_info.rectangle
+        bottom_win = rect_win.bottom
+    except Exception:
+        bottom_win = 99999
+
+    scored = []
+    for c in ctrls:
+        try:
+            ei = c.element_info
+            ct = getattr(ei, "control_type", "") or ""
+            cn = getattr(ei, "class_name", "") or ""
+            rect = getattr(ei, "rectangle", None)
+            if ct not in ("Edit", "Document", "Text") and "RichEdit" not in cn:
+                continue
+            if rect is None:
+                continue
+            area = _window_area(rect)
+            distance = max(0, bottom_win - rect.bottom)
+            score = area - distance * 10
+            scored.append((score, c))
+        except Exception:
+            continue
+
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[0], reverse=True)
+    try:
+        return scored[0][1].handle
+    except Exception:
+        return None
+
+
+def _send_message_silent(hwnd: int, message: str, press_enter: bool = True) -> bool:
+    """通过 SendMessageW 静默发送消息，不需要窗口在前台。
+    实验性功能：默认关闭，仅在 silent_mode=True 时启用。
+    """
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+
+        WM_PASTE = 0x0302
+        WM_KEYDOWN = 0x0100
+        WM_KEYUP = 0x0101
+        VK_RETURN = 0x0D
+
+        # 先把消息写入剪贴板
+        if not _clipboard_copy(message):
+            return False
+
+        # SendMessage WM_PASTE
+        user32.SendMessageW(hwnd, WM_PASTE, 0, 0)
+        time.sleep(0.1)
+
+        if press_enter:
+            user32.SendMessageW(hwnd, WM_KEYDOWN, VK_RETURN, 0)
+            time.sleep(0.02)
+            user32.SendMessageW(hwnd, WM_KEYUP, VK_RETURN, 0)
+
+        return True
+    except Exception as e:
+        _log(f"[WARN] 静默发送失败: {e}")
+        return False
 
 
 def send_message_to_current_chat(main_win, message: str,
@@ -578,8 +790,18 @@ def send_message_to_current_chat(main_win, message: str,
     向当前聊天窗口输入消息并发送。
     use_paste=True 时用 Ctrl+V（走剪贴板），False 时直接打字。
     OS 感知版：Win10 重试间隔更长，Win11 更快。
+    silent_mode=True 时尝试 SendMessage 静默发送，失败自动降级。
     """
     t = _OS_TIMING
+
+    # 静默模式（实验性）：尝试 SendMessage 后台发送
+    if t.get("silent_mode", False):
+        hwnd = _get_input_hwnd(main_win)
+        if hwnd and _send_message_silent(hwnd, message, press_enter=press_enter_to_send):
+            _log("[INFO] 静默发送成功")
+            return
+        _log("[WARN] 静默发送失败，降级到前台发送")
+
     retry_base = t["input_retry_base"]
 
     # 聚焦输入框（最多重试 5 次，兼容 Win10 慢机型）
@@ -604,7 +826,7 @@ def send_message_to_current_chat(main_win, message: str,
         time.sleep(0.08)
         keyboard.send_keys("^v")
     else:
-        keyboard.send_keys(message, with_spaces=True)
+        keyboard.send_keys(_escape_send_keys(message), with_spaces=True)
 
     time.sleep(delay)
 
@@ -633,20 +855,41 @@ def send_text(text: str, main_win=None):
 
 
 def send_image(image_path: str):
-    """发送图片（必须走剪贴板）"""
+    """发送图片（通过 CF_DIB 格式写入剪贴板，避免 CF_BITMAP 类型错误）"""
     img = Image.open(image_path).convert("RGB")
     _clipboard_clear()
-    try:
-        if "pywin32" in _pyperclip_extras and win32clipboard:
+
+    if "pywin32" in _pyperclip_extras and win32clipboard:
+        # PIL → BMP bytes → 跳过 14 字节文件头 → CF_DIB
+        buf = io.BytesIO()
+        img.save(buf, format="BMP")
+        dib_data = buf.getvalue()[14:]  # BMP file header = 14 bytes
+
+        try:
             win32clipboard.OpenClipboard()
             win32clipboard.EmptyClipboard()
-            win32clipboard.SetClipboardData(win32con.CF_BITMAP, img)
-            win32clipboard.CloseClipboard()
-        else:
-            # 兜底：用 pyperclip 写文件路径
+            win32clipboard.SetClipboardData(win32con.CF_DIB, dib_data)
+        except Exception as e:
+            print(f"[WARN] 图片剪贴板写入失败: {e}", file=sys.stderr)
             _clipboard_copy(image_path)
-    except Exception as e:
-        print(f"[WARN] 图片剪贴板写入失败: {e}", file=sys.stderr)
+        finally:
+            try:
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+
+        # 验证剪贴板内容
+        try:
+            win32clipboard.OpenClipboard()
+            available = win32clipboard.IsClipboardFormatAvailable(win32con.CF_DIB)
+            win32clipboard.CloseClipboard()
+            if not available:
+                _log("[WARN] CF_DIB 写入验证失败，降级为路径粘贴")
+                _clipboard_copy(image_path)
+        except Exception:
+            pass
+    else:
+        # 兜底：用 pyperclip 写文件路径
         _clipboard_copy(image_path)
 
     time.sleep(0.15)
@@ -655,12 +898,18 @@ def send_image(image_path: str):
     keyboard.send_keys("{ENTER}")
 
 
-def send_text_with_image(text: str, image_path: str):
-    """发送文字+图片"""
-    _clipboard_copy(text)
-    time.sleep(0.05)
-    keyboard.send_keys("^v")
-    time.sleep(0.2)
+def send_text_with_image(text: str, image_path: str, main_win=None):
+    """发送文字+图片：先发文字，再发图片"""
+    if main_win is not None:
+        send_message_to_current_chat(main_win, text, delay=0.15,
+                                     press_enter_to_send=True, use_paste=False)
+    else:
+        _clipboard_copy(text)
+        time.sleep(0.05)
+        keyboard.send_keys("^v")
+        time.sleep(0.2)
+        keyboard.send_keys("{ENTER}")
+        time.sleep(0.15)
     send_image(image_path)
 
 
@@ -692,11 +941,7 @@ def call_send(target: str, msg_type: str, text: str, image_path: str):
     elif msg_type == "图片":
         send_image(image_path)
     elif msg_type == "文字+图片":
-        _clipboard_copy(text)
-        time.sleep(0.08)
-        keyboard.send_keys("^v")
-        time.sleep(0.2)
-        send_image(image_path)
+        send_text_with_image(text, image_path, main_win)
     else:
         raise ValueError(f"不支持的消息类型: {msg_type}")
 
@@ -704,7 +949,7 @@ def call_send(target: str, msg_type: str, text: str, image_path: str):
 # ─── 配置（从外部 config.json 读取）──────────────────────
 
 ROOT = Path(__file__).resolve().parents[1]
-CFG_PATH = _real_home() / ".wechat-sender" / "config.json"
+CFG_PATH = _real_home() / ".wechatagi" / "config.json"
 XLSX_PATH = None
 
 SHEET_TASKS = "发送任务"
@@ -871,7 +1116,10 @@ def batch_send(dry_run: bool = False, send_interval: float = 5,
         wb.save(xlsx_path)
 
         if i < len(pending) - 1 and not dry_run:
-            time.sleep(send_interval)
+            # 发送间隔加 ±30% 随机抖动
+            jitter_factor = _OS_TIMING.get("jitter_delay_factor", 0.3)
+            jittered = send_interval * (1.0 + random.uniform(-jitter_factor, jitter_factor))
+            time.sleep(max(1.0, jittered))
 
     print(f"\n✅ 完成！成功 {success_count} 条，失败 {fail_count} 条")
 
@@ -885,7 +1133,7 @@ _cached_main_win = None
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="微信批量发送 — Windows 版（pywinauto）")
+    parser = argparse.ArgumentParser(description="WechatAGI — Windows 版（pywinauto）")
     parser.add_argument("--dry", action="store_true", help="模拟运行")
     parser.add_argument("--call-single", action="store_true",
                         help="单次发送（由 cli.py call_sender 调用）")

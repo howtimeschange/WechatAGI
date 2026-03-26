@@ -1,7 +1,7 @@
 {
-  "name": "wechat-sender-gui",
-  "version": "1.0.0",
-  "description": "微信批量发送助手 — 开箱即用 GUI 版",
+  "name": "wechatagi",
+  "version": "2.0.0",
+  "description": "WechatAGI — 微信智能发送助手",
   "main": "electron/main.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
@@ -11,7 +11,7 @@
     "dist:win": "npm run build && electron-builder --win --publish never",
     "dist": "electron-builder --mac --publish never && electron-builder --win --publish never"
   },
-  "author": "wechat-sender",
+  "author": "WechatAGI",
   "license": "MIT",
   "devDependencies": {
     "@babel/cli": "^7.28.6",
@@ -31,8 +31,8 @@
   },
   "build": {
     "afterPack": "./scripts/afterPack.js",
-    "appId": "com.wechat-sender.app",
-    "productName": "WechatSender",
+    "appId": "com.wechatagi.app",
+    "productName": "WechatAGI",
     "directories": {
       "output": "dist-electron"
     },

@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),
   getStatus: () => ipcRenderer.invoke('get-status'),
   getPlatform: () => ipcRenderer.invoke('get-platform'),
+  checkWechat: () => ipcRenderer.invoke('check-wechat'),
 
   // Excel 解析 & 模版
   parseExcel: (bytes) => ipcRenderer.invoke('parse-excel', bytes),
@@ -20,6 +21,11 @@ contextBridge.exposeInMainWorld('api', {
   daemonStart: () => ipcRenderer.invoke('daemon-start'),
   daemonStop: () => ipcRenderer.invoke('daemon-stop'),
   daemonStatus: () => ipcRenderer.invoke('daemon-status'),
+
+  // API 服务
+  apiStart: (opts) => ipcRenderer.invoke('api-start', opts),
+  apiStop: () => ipcRenderer.invoke('api-stop'),
+  apiStatus: () => ipcRenderer.invoke('api-status'),
 
   // 定时任务
   addSchedule: (schedule) => ipcRenderer.invoke('add-schedule', schedule),
@@ -50,5 +56,13 @@ contextBridge.exposeInMainWorld('api', {
   onDaemonStopped: (cb) => {
     ipcRenderer.on('daemon-stopped', () => cb())
     return () => ipcRenderer.removeAllListeners('daemon-stopped')
+  },
+  onApiLog: (cb) => {
+    ipcRenderer.on('api-log', (_, data) => cb(data))
+    return () => ipcRenderer.removeAllListeners('api-log')
+  },
+  onApiStopped: (cb) => {
+    ipcRenderer.on('api-stopped', () => cb())
+    return () => ipcRenderer.removeAllListeners('api-stopped')
   },
 })
