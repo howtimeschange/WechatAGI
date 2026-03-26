@@ -281,7 +281,7 @@
 }
 
 .checkbox-wrap input:indeterminate + .checkmark {
-  background: var(--wx-green);
+  background: #fff;
   border-color: var(--wx-green);
 }
 
@@ -292,7 +292,7 @@
   top: 6px;
   width: 8px;
   height: 2px;
-  background: #fff;
+  background: var(--wx-green);
 }
 
 .checkbox-wrap input:disabled + .checkmark {
