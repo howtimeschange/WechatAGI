@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-微信批量发送助手 — CLI 工具（macOS / Windows）
+微信批量发送助手 - CLI 工具（macOS / Windows）
 GUI 增强版：支持 --json 输出
 """
 from __future__ import annotations
@@ -195,6 +195,23 @@ def _ensure_accessibility():
         pass
 
 
+_win_mod = None  # 模块级缓存：整批任务复用同一个 wechat_send_win 模块（不重新附着微信）
+
+
+def _get_win_mod():
+    """懒加载 wechat_send_win 模块，并在第一次加载后缓存，避免每条消息都重新 import。"""
+    global _win_mod
+    if _win_mod is not None:
+        return _win_mod
+    import importlib.util
+    _win_script = _SCRIPTS_DIR / "wechat_send_win.py"
+    spec = importlib.util.spec_from_file_location("wechat_send_win", str(_win_script))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _win_mod = mod
+    return mod
+
+
 def call_sender(target: str, msg_type: str, text: str, image_path: str):
     img = str(Path(image_path).expanduser()) if image_path else ""
     if IS_MAC:
@@ -203,30 +220,14 @@ def call_sender(target: str, msg_type: str, text: str, image_path: str):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
             err = r.stderr.strip() or "AppleScript 执行失败"
-            print(f"[SEND_ERROR] {err}", file=sys.stderr)
-            sys.exit(1)
-        # 检查 stdout 中是否有 AppleScript error 关键字（script 内部 try 吞掉的错误）
+            raise RuntimeError(err)
         stdout_lower = r.stdout.lower()
-        if "error" in stdout_lower and ("not found" in stdout_lower or "can’t" in stdout_lower or "permission" in stdout_lower):
-            print(f"[SEND_ERROR] AppleScript 内部错误: {r.stdout.strip()}", file=sys.stderr)
-            sys.exit(1)
+        if "error" in stdout_lower and ("not found" in stdout_lower or "can't" in stdout_lower or "permission" in stdout_lower):
+            raise RuntimeError(f"AppleScript 内部错误: {r.stdout.strip()}")
     elif IS_WINDOWS:
-        # 用 subprocess 调用（替代 importlib，避免 __import__  machinery 在打包环境报错）
-        _win_script = _SCRIPTS_DIR / "wechat_send_win.py"
-        cmd = [
-            sys.executable,
-            str(_win_script),
-            "--call-single",
-            "--target", target,
-            "--msg-type", msg_type,
-            "--text", text or "",
-            "--image-path", img,
-        ]
-        r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=30)
-        if r.returncode != 0:
-            err = (r.stderr.strip() or r.stdout.strip() or "发送失败")
-            print(f"[call_sender] {err}", file=sys.stderr)
-            sys.exit(1)
+        # 进程内直接调用（不再 spawn 子进程），整批任务复用模块，避免每条都重新附着微信
+        mod = _get_win_mod()
+        mod.call_send(target, msg_type, text or "", img)
     else:
         raise RuntimeError("当前系统不支持微信自动化（仅支持 macOS 和 Windows）")
 
@@ -353,7 +354,7 @@ def cmd_status(args):
         return
 
     if HAS_RICH:
-        table = Table(title=f"📊 任务概览 — {xlsx_path.name}", box=None)
+        table = Table(title=f"📊 任务概览 - {xlsx_path.name}", box=None)
         table.add_column("状态", style="white")
         table.add_column("数量", justify="right")
         table.add_row("⏳ 待发送", f"[yellow]{waiting}[/yellow]")

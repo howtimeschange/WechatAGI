@@ -306,6 +306,13 @@ def focus_search_and_open_chat(main_win, friend_name: str, delay: float = 0.35):
     main_win.set_focus()
     time.sleep(0.3)
 
+    # 先按 ESC 退出当前聊天页（如果在聊天界面，^f 会打开聊天内搜索而非全局搜索）
+    # 连按两次确保退出各种模态
+    keyboard.send_keys("{ESC}")
+    time.sleep(0.15)
+    keyboard.send_keys("{ESC}")
+    time.sleep(0.2)
+
     # 尝试快捷键聚焦搜索框
     for combo in ("^f", "^k"):
         _log(f"[INFO] 发送 {combo} 聚焦搜索框")
@@ -559,10 +566,25 @@ def send_text_with_image(text: str, image_path: str):
 
 
 def call_send(target: str, msg_type: str, text: str, image_path: str):
-    """统一发送入口（由 cli.py 调用）"""
-    # attach_wechat 一次性附着，把 main_win 传给后续函数，避免每步重新附着
-    app, main_win = attach_wechat()
+    """统一发送入口（由 cli.py 调用）。
+    进程内批量调用时复用同一个 app/main_win，不重新附着微信。
+    """
+    global _cached_app, _cached_main_win
+
+    # 懒加载：首次调用时附着微信，之后复用
+    if _cached_main_win is None:
+        _cached_app, _cached_main_win = attach_wechat()
+    else:
+        # 验证窗口仍然有效，无效则重新附着
+        try:
+            _ = _cached_main_win.element_info.name
+        except Exception:
+            _log("[INFO] 缓存窗口已失效，重新附着微信")
+            _cached_app, _cached_main_win = attach_wechat()
+
+    main_win = _cached_main_win
     focus_search_and_open_chat(main_win, target)
+
     if msg_type == "文字":
         send_message_to_current_chat(main_win, text, delay=0.15,
                                      press_enter_to_send=True, use_paste=False)
@@ -755,6 +777,10 @@ def batch_send(dry_run: bool = False, send_interval: float = 5,
 
 # ─── 全局开关 ───────────────────────────────────────────
 VERBOSE = False
+
+# 模块级缓存：批量发送时复用同一个微信窗口引用，不重新附着
+_cached_app = None
+_cached_main_win = None
 
 
 if __name__ == "__main__":
