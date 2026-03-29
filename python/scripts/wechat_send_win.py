@@ -53,21 +53,40 @@ def _install_and_import(module, package=None):
         return __import__(module)
 
 
+def _install_optional_module(module, package=None):
+    """尝试导入可选依赖，安装失败时仅告警，不中断文字发送链路。"""
+    try:
+        return __import__(module)
+    except ImportError:
+        package = package or module
+        pypi_name = {"pywin32": "pywin32"}.get(package, package)
+        print(f"[信息] 正在安装可选依赖 {pypi_name}...")
+        r = subprocess.run(
+            [sys.executable, "-m", "pip", "install", pypi_name, "--quiet"],
+            capture_output=True, text=True
+        )
+        if r.returncode != 0:
+            print(f"[WARN] pip install {pypi_name} 失败: {r.stderr}", file=sys.stderr)
+            return None
+        try:
+            return __import__(module)
+        except ImportError:
+            return None
+
+
 # 提前导入（自动安装）
 pywinauto_mod = _install_and_import("pywinauto")
 from pywinauto import Application, keyboard, mouse, Desktop
 from pywinauto.timings import wait_until_passes
-import psutil
+psutil = _install_and_import("psutil")
 _pyperclip = _install_and_import("pyperclip")
 _pillow = _install_and_import("PIL", "Pillow")
 Image = _pillow.Image
 _pyperclip_extras = {"pywin32": None, "win32clipboard": None, "win32con": None}
-try:
-    import win32clipboard
-    import win32con
+win32clipboard = _install_optional_module("win32clipboard", "pywin32")
+win32con = _install_optional_module("win32con", "pywin32")
+if win32clipboard and win32con:
     _pyperclip_extras["pywin32"] = True
-except ImportError:
-    pass
 
 
 # ─── UTF-8 编码保障 ────────────────────────────────────

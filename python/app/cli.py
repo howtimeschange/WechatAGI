@@ -152,7 +152,7 @@ def read_tasks(ws, cols) -> list[Task]:
         task = Task(
             row=r, app=app, target=target, msg_type=msg_type,
             text=text, image_path=image_path,
-            send_time=send_time_raw if isinstance(send_time_raw, datetime) else None,
+            send_time=parse_task_datetime(send_time_raw),
             repeat=str(repeat_raw).strip() if repeat_raw else "",
             status=status,
         )
@@ -188,6 +188,43 @@ def should_send(task: Task, now: datetime) -> bool:
     if task.send_time is None:
         return True
     return now >= task.send_time
+
+
+def parse_task_datetime(value) -> Optional[datetime]:
+    """兼容 Excel 字符串和前端 datetime-local 的 `YYYY-MM-DDTHH:MM` 格式。"""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value
+
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    candidates = [
+        raw,
+        raw.replace("T", " "),
+        raw.replace("/", "-"),
+        raw.replace("/", "-").replace("T", " "),
+    ]
+    for candidate in candidates:
+        try:
+            return datetime.fromisoformat(candidate)
+        except ValueError:
+            pass
+
+    for fmt in (
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+    ):
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            pass
+    return None
 
 
 def _ensure_accessibility():
@@ -394,14 +431,6 @@ def _parse_tasks_from_json(json_str: str) -> list[Task]:
     data = _json.loads(json_str)
     tasks = []
     for idx, item in enumerate(data):
-        send_time = None
-        if item.get("send_time"):
-            for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-                try:
-                    send_time = datetime.strptime(item["send_time"], fmt)
-                    break
-                except ValueError:
-                    pass
         tasks.append(Task(
             row=0,  # 不关联 Excel 行
             app=str(item.get("app", "微信")).strip(),
@@ -409,7 +438,7 @@ def _parse_tasks_from_json(json_str: str) -> list[Task]:
             msg_type=str(item.get("msg_type", "文字")).strip(),
             text=str(item.get("text", "")).strip(),
             image_path=str(item.get("image_path", "")).strip(),
-            send_time=send_time,
+            send_time=parse_task_datetime(item.get("send_time")),
             repeat=str(item.get("repeat", "")).strip(),
             status="",
         ))
@@ -578,15 +607,7 @@ def cmd_daemon(args):
                     continue
 
                 # 解析 send_time
-                send_time = None
-                raw_st = task_dict.get("send_time", "") or ""
-                if raw_st:
-                    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-                        try:
-                            send_time = datetime.strptime(raw_st, fmt)
-                            break
-                        except ValueError:
-                            pass
+                send_time = parse_task_datetime(task_dict.get("send_time"))
 
                 # 没有 send_time 的任务留着手动处理（守护进程跳过）
                 if send_time is None:

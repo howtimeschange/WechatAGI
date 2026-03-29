@@ -4,7 +4,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-v2.0.0-blue)
+![Version](https://img.shields.io/badge/version-v2.0.1-blue)
 
 ## 功能特性
 
@@ -48,10 +48,13 @@ Releases：https://github.com/howtimeschange/WechatAGI/releases
 
 ```bash
 npm install
+python -m pip install -r python/requirements.txt
 npm run dev           # 开发热重载
 npm run dist:mac      # 构建 macOS DMG
 npm run dist:win      # 构建 Windows NSIS
 ```
+
+Windows 本地开发建议先确认 `python` 或 `py` 命令可用；发送链路依赖 Python 自动化脚本。
 
 ### 依赖
 

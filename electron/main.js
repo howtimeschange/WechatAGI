@@ -5,10 +5,105 @@ const fs = require('fs')
 const os = require('os')
 
 
+function commandExists(command, args = ['--version']) {
+  try {
+    const result = spawnSync(command, args, {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 8000,
+    })
+    return !result.error && result.status === 0
+  } catch (_) {
+    return false
+  }
+}
+
+function isPythonAvailable(command) {
+  if (!command) return false
+  const isPathLike = path.isAbsolute(command) || command.includes('/') || command.includes('\\')
+  if (isPathLike) return fs.existsSync(command)
+  if (command === 'py') return commandExists('py', ['-3', '--version']) || commandExists('py')
+  return commandExists(command)
+}
+
+function summarizeSendFailure(rawText = '') {
+  const raw = String(rawText || '').replace(/\0/g, ' ').trim()
+  const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  const focusLines = lines.filter(line => (
+    /(\[ERROR\]|\[WARN\]|❌|ModuleNotFoundError|ImportError|No module named|未找到微信窗口|无法找到微信主窗口|等待微信窗口超时|微信未运行|图片不存在)/i.test(line)
+  ))
+  const detail = (focusLines.length > 0 ? focusLines : lines).slice(-6).join('\n')
+  const compact = (focusLines[focusLines.length - 1] || lines[lines.length - 1] || '').replace(/\s+/g, ' ').trim()
+
+  if (
+    /(ENOENT|not recognized as an internal or external command|cannot find the file|No such file or directory)/i.test(compact) &&
+    /(python|py\.exe|python\.exe)/i.test(compact)
+  ) {
+    return {
+      category: 'python',
+      title: '找不到 Python',
+      message: '当前 Windows 环境没有可用的 Python，请先安装 Python，或使用带 bundle Python 的安装包。',
+      detail,
+    }
+  }
+
+  if (
+    /(No module named|ModuleNotFoundError|ImportError|dependency bootstrap failed|pip install .*失败|Could not find a version that satisfies)/i.test(compact)
+  ) {
+    return {
+      category: 'dependency',
+      title: 'Python 依赖缺失',
+      message: '发送依赖没有装完整，请执行 `python -m pip install -r python/requirements.txt`，或重新安装最新版本。',
+      detail,
+    }
+  }
+
+  if (/(未找到微信窗口|无法找到微信主窗口|等待微信窗口超时|微信未运行|已尝试 Ctrl\+Alt\+W 唤醒)/i.test(compact)) {
+    return {
+      category: 'wechat',
+      title: '找不到微信窗口',
+      message: '请确认微信 PC 版已启动并登录，且窗口没有最小化到托盘。',
+      detail,
+    }
+  }
+
+  if (/(图片不存在|图片消息缺少图片路径)/i.test(compact)) {
+    return {
+      category: 'image',
+      title: '图片路径无效',
+      message: '当前任务引用的图片不存在，或图片路径为空，请检查任务配置。',
+      detail,
+    }
+  }
+
+  return {
+    category: 'generic',
+    title: '发送失败',
+    message: compact || '发送进程异常退出，请打开日志查看详细信息。',
+    detail,
+  }
+}
+
+function createPythonUnavailableSummary(pythonBin) {
+  return summarizeSendFailure(`python not found: ${pythonBin}`)
+}
+
 // ─── Python 路径（运行时检测，避免 isPackaged 在模块加载时出错）───────────
 function getPythonPath() {
   if (!app.isPackaged) {
-    return process.platform === 'win32' ? 'python' : 'python3'
+    const devBundle = process.platform === 'win32'
+      ? path.join(__dirname, '..', 'python', 'bundle', 'python.exe')
+      : path.join(__dirname, '..', 'python', 'bundle', 'bin', 'python3')
+    if (fs.existsSync(devBundle)) return devBundle
+
+    if (process.platform === 'win32') {
+      if (commandExists('python')) return 'python'
+      if (commandExists('py', ['-3', '--version']) || commandExists('py')) return 'py'
+      return 'python'
+    }
+    if (commandExists('python3')) return 'python3'
+    if (commandExists('python')) return 'python'
+    return 'python3'
   }
   // extraResources: python/bundle/ -> Resources/python/bundle/
   const base = path.join(process.resourcesPath, 'python')
@@ -28,33 +123,62 @@ function getPythonPath() {
 function ensurePythonDeps() {
   if (!app.isPackaged) return
   const pythonPath = getPythonPath()
-  try {
-    require('child_process').execSync(
-      `${pythonPath} -c "import openpyxl; print('ok')"`,
-      { timeout: 8000 }
+  const requiredModules = [
+    { module: 'openpyxl', pkg: 'openpyxl' },
+    { module: 'yaml', pkg: 'PyYAML' },
+    { module: 'rich', pkg: 'rich' },
+    { module: 'flask', pkg: 'flask' },
+  ]
+  if (process.platform === 'win32') {
+    requiredModules.push(
+      { module: 'pywinauto', pkg: 'pywinauto' },
+      { module: 'psutil', pkg: 'psutil' },
+      { module: 'pyperclip', pkg: 'pyperclip' },
+      { module: 'win32clipboard', pkg: 'pywin32' },
+      { module: 'PIL', pkg: 'Pillow' },
     )
-    return // openpyxl already available
-  } catch (_) {}
-
-  console.log('[openpyxl] not found, attempting install via pip...')
-  // 优先用 pip install --user（不会破坏系统 Python 环境）
-  const installCmd =
-    `${pythonPath} -m pip install --user openpyxl PyYAML rich 2>&1`
+  }
+  const probeCode = [
+    'import importlib.util',
+    `mods = ${JSON.stringify(requiredModules.map(item => item.module))}`,
+    'missing = [m for m in mods if importlib.util.find_spec(m) is None]',
+    'print("\\n".join(missing))',
+  ].join('; ')
   try {
-    const out = require('child_process').execSync(installCmd, { timeout: 120 * 1000 })
-    console.log('[openpyxl] install output:', out.toString())
-  } catch (e) {
-    console.error('[openpyxl] pip install --user failed:', e.message)
-    // 最后的 fallback：尝试系统 pip 直接安装到用户目录
-    try {
-      const fallback = require('child_process').execSync(
-        `python3 -m pip install --user openpyxl PyYAML rich 2>&1`,
-        { timeout: 120 * 1000 }
-      )
-      console.log('[openpyxl] fallback install output:', fallback.toString())
-    } catch (e2) {
-      console.error('[openpyxl] all install attempts failed:', e2.message)
+    const probe = spawnSync(pythonPath, ['-c', probeCode], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 15000,
+    })
+    if (probe.error) throw probe.error
+    if (probe.status !== 0) throw new Error(probe.stderr || 'dependency probe failed')
+
+    const missingModules = probe.stdout
+      .split(/\r?\n/)
+      .map(item => item.trim())
+      .filter(Boolean)
+    if (missingModules.length === 0) return
+
+    const missingPackages = [...new Set(
+      requiredModules
+        .filter(item => missingModules.includes(item.module))
+        .map(item => item.pkg)
+    )]
+    console.log('[python-deps] missing modules:', missingModules.join(', '))
+    console.log('[python-deps] installing packages:', missingPackages.join(', '))
+
+    const install = spawnSync(pythonPath, ['-m', 'pip', 'install', '--user', ...missingPackages], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 120 * 1000,
+    })
+    if (install.error) throw install.error
+    if (install.status !== 0) {
+      throw new Error(install.stderr || install.stdout || 'pip install failed')
     }
+    console.log('[python-deps] install output:', install.stdout || install.stderr || 'ok')
+  } catch (e) {
+    console.error('[python-deps] dependency bootstrap failed:', e.message)
   }
 }
 
@@ -227,6 +351,15 @@ ipcMain.handle('send-selected', async (event, taskData) => {
   console.log('[send-selected] script:', scriptPath)
   console.log('[send-selected] tasks:', jsonArg.slice(0, 80))
 
+  if (!isPythonAvailable(pythonBin)) {
+    const summary = createPythonUnavailableSummary(pythonBin)
+    if (!win.isDestroyed()) {
+      win.webContents.send('send-progress', `[ERROR] ${summary.title}: ${summary.message}`)
+      win.webContents.send('send-done', { code: 1, ok: false, summary })
+    }
+    return { ok: false, error: summary.message, summary }
+  }
+
   // ✅ 改为 spawn 异步方式，避免 execFileSync 同步阻塞主进程导致"未响应"
   const proc = spawn(pythonBin, [scriptPath, 'send', '--tasks-json', jsonArg], {
     env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }),
@@ -234,6 +367,14 @@ ipcMain.handle('send-selected', async (event, taskData) => {
   })
 
   let stdoutBuf = ''
+  let stderrBuf = ''
+  let finished = false
+
+  function finishSend(payload) {
+    if (finished) return
+    finished = true
+    if (!win.isDestroyed()) win.webContents.send('send-done', payload)
+  }
 
   proc.stdout.on('data', function(d) {
     const text = d.toString('utf8')
@@ -259,21 +400,29 @@ ipcMain.handle('send-selected', async (event, taskData) => {
 
   proc.stderr.on('data', function(d) {
     const text = d.toString('utf8')
+    stderrBuf += text
     console.error('[send-selected] stderr:', text)
     if (!win.isDestroyed()) win.webContents.send('send-progress', '[ERROR] ' + text)
   })
 
   proc.on('close', function(code) {
     console.log('[send-selected] process exited with code', code)
-    if (!win.isDestroyed()) win.webContents.send('send-done', { code: code || 0 })
+    const exitCode = code || 0
+    if (exitCode === 0) {
+      finishSend({ code: 0, ok: true })
+      return
+    }
+    const summary = summarizeSendFailure([stderrBuf, stdoutBuf].filter(Boolean).join('\n'))
+    finishSend({ code: exitCode, ok: false, summary })
   })
 
   proc.on('error', function(err) {
     console.error('[send-selected] process error:', err.message)
+    const summary = summarizeSendFailure(err.message)
     if (!win.isDestroyed()) {
       win.webContents.send('send-progress', '[ERROR] ' + err.message)
-      win.webContents.send('send-done', { code: 1, error: err.message })
     }
+    finishSend({ code: 1, ok: false, error: err.message, summary })
   })
 
   return { ok: true }
@@ -374,16 +523,27 @@ ipcMain.handle('get-platform', () => process.platform)
 
 ipcMain.handle('check-wechat', async () => {
   try {
+    const pythonBin = getPythonPath()
+    if (!isPythonAvailable(pythonBin)) {
+      const summary = createPythonUnavailableSummary(pythonBin)
+      return { alive: false, detail: summary.message, summary }
+    }
     const r = spawnSync(getPythonPath(), [getScriptPath('app/cli.py'), 'check-wechat'], {
       encoding: 'utf8', timeout: 10000,
       env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' }),
     })
+    if (r.error) {
+      const summary = summarizeSendFailure(r.error.message)
+      return { alive: false, detail: summary.message, summary }
+    }
     if (r.status === 0) {
       try { return JSON.parse(r.stdout) } catch (_) {}
     }
-    return { alive: false, detail: r.stderr || '检测失败' }
+    const summary = summarizeSendFailure([r.stderr, r.stdout].filter(Boolean).join('\n'))
+    return { alive: false, detail: summary.message, summary }
   } catch (e) {
-    return { alive: false, detail: e.message }
+    const summary = summarizeSendFailure(e.message)
+    return { alive: false, detail: summary.message, summary }
   }
 })
 

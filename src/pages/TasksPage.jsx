@@ -45,6 +45,23 @@ function saveTasks(tasks) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)) } catch {}
 }
 
+function classifyLogType(line) {
+  if (!line) return ''
+  if (line.includes('❌') || line.includes('[ERROR]')) return 'error'
+  if (line.includes('⚠️') || line.includes('[WARN]')) return 'warning'
+  if (line.includes('✅')) return 'success'
+  return ''
+}
+
+function normalizeSendIssue(summary, fallback = {}) {
+  return {
+    title: summary?.title || fallback.title || '发送失败',
+    message: summary?.message || fallback.message || fallback.error || '发送过程中发生错误，请查看日志。',
+    detail: summary?.detail || fallback.detail || '',
+    category: summary?.category || fallback.category || 'generic',
+  }
+}
+
 // ── 主组件 ───────────────────────────────────────────────
 export default function TasksPage() {
   const [tasks, setTasks] = useState(loadTasks)
@@ -56,6 +73,7 @@ export default function TasksPage() {
   const [dragging, setDragging] = useState(false)
   const [editTask, setEditTask] = useState(null)
   const [daemonOn, setDaemonOn] = useState(false)
+  const [sendIssue, setSendIssue] = useState(null)
 
   // ── 守护进程状态监听 ────────────────────────────────────
   useEffect(() => {
@@ -207,15 +225,20 @@ export default function TasksPage() {
     abortRef.current = false
     setShowLog(true)
     setLogs([])
+    setSendIssue(null)
 
     // 发送前检测微信是否在线
     if (window.api?.checkWechat) {
       try {
         const wechat = await window.api.checkWechat()
         if (!wechat.alive) {
-          addLog(`⚠️ 微信未运行：${wechat.detail}`, 'error')
+          const issue = normalizeSendIssue(wechat.summary, {
+            title: '微信未就绪',
+            message: wechat.detail || '请先启动并登录微信。',
+          })
+          setSendIssue(issue)
+          addLog(`⚠️ ${issue.title}: ${issue.message}`, 'warning')
           setSending(false)
-          alert(`微信未运行：${wechat.detail}\n请先启动并登录微信后再发送。`)
           return
         }
         addLog('✓ 微信已在线')
@@ -228,7 +251,7 @@ export default function TasksPage() {
       // 真实 Electron 模式
       const unsub1 = window.api.onSendProgress((data) => {
         data.split('\n').filter(Boolean).forEach(line => {
-          const type = line.includes('✅') ? 'success' : line.includes('❌') ? 'error' : ''
+          const type = classifyLogType(line)
           addLog(line.trim(), type)
         })
       })
@@ -243,9 +266,20 @@ export default function TasksPage() {
           return updated
         })
       })
-      const unsub2 = window.api.onSendDone(() => {
+      const unsub2 = window.api.onSendDone((result) => {
         setSending(false)
-        addLog('— 发送完成 —', 'success')
+        if (result?.ok === false || result?.code) {
+          const issue = normalizeSendIssue(result?.summary, {
+            title: '发送失败',
+            message: result?.error || (result?.code ? `发送进程退出，错误码 ${result.code}` : '发送进程异常退出。'),
+          })
+          setSendIssue(issue)
+          addLog(`❌ ${issue.title}: ${issue.message}`, 'error')
+          addLog('— 发送失败 —', 'error')
+        } else {
+          setSendIssue(null)
+          addLog('— 发送完成 —', 'success')
+        }
         unsub1?.(); unsub2?.(); unsub3?.()
       })
       window.api.sendSelected(targets)
@@ -325,6 +359,17 @@ export default function TasksPage() {
             {stats.failed > 0 && <span className="stat-chip chip-fail">失败 {stats.failed}</span>}
           </div>
         </div>
+
+        {sendIssue && (
+          <div className={`send-issue-banner issue-${sendIssue.category === 'wechat' ? 'warning' : 'error'}`}>
+            <div className="issue-copy">
+              <div className="issue-title">{sendIssue.title}</div>
+              <div className="issue-text">{sendIssue.message}</div>
+              {sendIssue.detail && <div className="issue-detail">{sendIssue.detail}</div>}
+            </div>
+            <button className="issue-close" onClick={() => setSendIssue(null)}>关闭</button>
+          </div>
+        )}
 
         {/* 操作栏 */}
         <div className="tasks-toolbar">

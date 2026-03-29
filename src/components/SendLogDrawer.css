@@ -50,5 +50,6 @@
 .log-line { color: #D4D4D4; }
 .log-success { color: #4EC9B0; }
 .log-error { color: #F48771; }
+.log-warning { color: #D7BA7D; }
 .log-dim { color: #888; }
 .log-empty { color: #555; text-align: center; padding: 12px; font-family: inherit; font-size: 12px; }

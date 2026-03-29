@@ -2,3 +2,8 @@ PyYAML==6.0.2
 openpyxl==3.1.5
 rich==13.9.4
 flask>=3.0
+pywinauto==0.6.9; platform_system == "Windows"
+psutil>=5.9; platform_system == "Windows"
+pyperclip>=1.9.0; platform_system == "Windows"
+pywin32>=308; platform_system == "Windows"
+Pillow>=10.4.0; platform_system == "Windows"
