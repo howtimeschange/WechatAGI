@@ -244,16 +244,35 @@ def _ensure_accessibility():
 _win_mod = None  # 模块级缓存：整批任务复用同一个 wechat_send_win 模块（不重新附着微信）
 
 
+def _load_module_from_path(name: str, file_path: Path):
+    """动态加载模块，并先注册到 sys.modules，兼容 dataclass 在新 Python 上的检查逻辑。"""
+    import importlib.util
+
+    existing = sys.modules.get(name)
+    if existing is not None and getattr(existing, "__file__", None) == str(file_path):
+        return existing
+
+    spec = importlib.util.spec_from_file_location(name, str(file_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载模块: {name} <- {file_path}")
+
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:
+        sys.modules.pop(name, None)
+        raise
+    return mod
+
+
 def _get_win_mod():
     """懒加载 wechat_send_win 模块，并在第一次加载后缓存，避免每条消息都重新 import。"""
     global _win_mod
     if _win_mod is not None:
         return _win_mod
-    import importlib.util
     _win_script = _SCRIPTS_DIR / "wechat_send_win.py"
-    spec = importlib.util.spec_from_file_location("wechat_send_win", str(_win_script))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _load_module_from_path("wechat_send_win", _win_script)
     _win_mod = mod
     return mod
 
@@ -261,10 +280,7 @@ def _get_win_mod():
 def call_sender(target: str, msg_type: str, text: str, image_path: str):
     # 图片 URL 自动下载 + MD5 缓存
     if image_path and image_path.strip().startswith(("http://", "https://")):
-        import importlib.util as _ilu
-        _ic_spec = _ilu.spec_from_file_location("image_cache", str(_SELF_DIR / "image_cache.py"))
-        _ic_mod = _ilu.module_from_spec(_ic_spec)
-        _ic_spec.loader.exec_module(_ic_mod)
+        _ic_mod = _load_module_from_path("image_cache", _SELF_DIR / "image_cache.py")
         image_path = _ic_mod.resolve_image(image_path)
     img = str(Path(image_path).expanduser()) if image_path else ""
     if IS_MAC:
@@ -678,11 +694,7 @@ def cmd_template(_):
 
 def cmd_check_wechat(_):
     # 动态导入 monitor 模块（兼容脚本直接运行和包导入两种场景）
-    import importlib.util
-    monitor_path = _SELF_DIR / "monitor.py"
-    spec = importlib.util.spec_from_file_location("monitor", str(monitor_path))
-    monitor = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(monitor)
+    monitor = _load_module_from_path("monitor", _SELF_DIR / "monitor.py")
     result = monitor.check_wechat_alive()
     print(json.dumps(result, ensure_ascii=False))
 
@@ -708,10 +720,7 @@ def cmd_send_one(args):
 
 def cmd_api(args):
     """启动 Flask HTTP API 服务。"""
-    import importlib.util as _ilu
-    _api_spec = _ilu.spec_from_file_location("api_server", str(_SELF_DIR / "api_server.py"))
-    _api_mod = _ilu.module_from_spec(_api_spec)
-    _api_spec.loader.exec_module(_api_mod)
+    _api_mod = _load_module_from_path("api_server", _SELF_DIR / "api_server.py")
 
     cfg = get_cfg()
     port = args.port or cfg.get("api_port", 9528)

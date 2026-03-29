@@ -58,7 +58,7 @@ export default function Sidebar({ current, onNavigate }) {
       </ul>
 
       <div className="sidebar-footer">
-        <span className="sidebar-version">v2.0.1</span>
+        <span className="sidebar-version">v2.0.2</span>
       </div>
     </nav>
   )

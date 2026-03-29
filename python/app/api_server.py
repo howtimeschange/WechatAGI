@@ -22,9 +22,21 @@ _SELF_DIR = Path(__file__).resolve().parent
 def _load_module(name: str, filename: str):
     """动态加载同目录下的模块。"""
     path = _SELF_DIR / filename
+    existing = sys.modules.get(name)
+    if existing is not None and getattr(existing, "__file__", None) == str(path):
+        return existing
+
     spec = importlib.util.spec_from_file_location(name, str(path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载模块: {name} <- {path}")
+
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:
+        sys.modules.pop(name, None)
+        raise
     return mod
 
 

@@ -7,6 +7,28 @@ from __future__ import annotations
 import platform
 import subprocess
 import sys
+from pathlib import Path
+
+
+def _load_script_module(name: str, file_path: Path):
+    import importlib.util
+
+    existing = sys.modules.get(name)
+    if existing is not None and getattr(existing, "__file__", None) == str(file_path):
+        return existing
+
+    spec = importlib.util.spec_from_file_location(name, str(file_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载模块: {name} <- {file_path}")
+
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:
+        sys.modules.pop(name, None)
+        raise
+    return mod
 
 
 def check_wechat_alive() -> dict:
@@ -45,14 +67,9 @@ def _check_mac() -> dict:
 def _check_windows() -> dict:
     """Windows: 复用 wechat_send_win._find_wechat_window() 检测窗口。"""
     try:
-        import importlib.util
-        from pathlib import Path
-
         scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
         win_script = scripts_dir / "wechat_send_win.py"
-        spec = importlib.util.spec_from_file_location("wechat_send_win", str(win_script))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = _load_script_module("wechat_send_win", win_script)
         win = mod._find_wechat_window()
         if win is not None:
             return {"alive": True, "detail": "微信窗口已找到"}

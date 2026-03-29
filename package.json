@@ -1,6 +1,6 @@
 {
   "name": "wechatagi",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "WechatAGI — 微信智能发送助手",
   "main": "electron/main.js",
   "scripts": {
